@@ -24,14 +24,16 @@ const Token = struct {
         @"else",
 
         // syntax
-        left_paren,
-        right_paren,
-        semicolon,
-        comma,
-        path_separator,
-        list_open,
-        list_close,
-        at,
+        left_paren, // (
+        right_paren, // )
+        semicolon, // ;
+        comma, // ,
+        path_separator, // ::
+        list_open, // [
+        list_close, // ]
+        left_brace, // {
+        right_brace, // }
+        at, // @
 
         // literals
         lit_true,
@@ -139,6 +141,8 @@ const BUILTINS = [_]Builtin{
     .{ .name = "]", .kind = .list_close },
     .{ .name = "(", .kind = .left_paren },
     .{ .name = ")", .kind = .right_paren },
+    .{ .name = "{", .kind = .left_brace },
+    .{ .name = "}", .kind = .right_brace },
     .{ .name = ",", .kind = .comma },
     .{ .name = ";", .kind = .semicolon },
 };
@@ -566,6 +570,38 @@ fn parseAnnotation(tokens: []Token, index: usize) !?struct { nextIndex: usize, a
             .annotation = types.Annotation.init(name, value),
         };
     }
+    return null;
+}
+
+// Condition ::= ('when' | 'unless') '{' Expr '}'
+fn parseCondition(tokens: []Token, index: usize) !?struct { nextIndex: usize, when: bool, annotation: types.Expr } {
+    var i = index;
+    const when = matches(tokens, index, .when);
+    const unless = matches(tokens, index, .unless);
+    if (when or unless) {
+        i = i + 1;
+        if (!matches(tokens, i, .left_brace)) {
+            return error.ExpectedLeftBrace;
+        }
+        i = i + 1;
+
+        if (try parseExpr(tokens, i)) |expr| {
+            i = expr.nextIndex;
+        } else {
+            return error.ExpectedExpr;
+        }
+
+        if (!matches(tokens, i, .right_brace)) {
+            return error.ExpectedRightBrace;
+        }
+        i = i + 1;
+    }
+    return null;
+}
+
+fn parseExpr(tokens: []Token, index: usize) !?struct { nextIndex: usize, expr: types.Expr } {
+    _ = tokens; // autofix
+    _ = index; // autofix
     return null;
 }
 

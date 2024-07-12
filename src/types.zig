@@ -176,11 +176,51 @@ pub const Annotation = struct {
     }
 };
 
+// https://github.com/cedar-policy/cedar/blob/b653e6c0627423b24bed50ee664b0302c512f16a/cedar-policy-core/src/ast/expr.rs#L48
+pub const Expr = union(enum) {
+    literal: []const u8,
+    variable: []const u8,
+    slot: []const u8,
+    @"if": struct { @"if": *Expr, then: *Expr, @"else": *Expr },
+    @"and": struct { left: *Expr, right: *Expr },
+    @"or": struct { left: *Expr, right: *Expr },
+
+    pub fn literal(value: []const u8) @This() {
+        return .{ .literal = value };
+    }
+
+    pub fn variable(value: []const u8) @This() {
+        return .{ .variable = value };
+    }
+
+    pub fn slot(value: []const u8) @This() {
+        return .{ .slot = value };
+    }
+
+    pub fn @"and"(l: Expr, r: Expr) @This() {
+        return .{ .@"and" = .{ .left = l, .right = r } };
+    }
+
+    pub fn @"or"(l: Expr, r: Expr) @This() {
+        return .{ .@"or" = .{ .left = l, .right = r } };
+    }
+
+    pub fn format(
+        _: @This(),
+        comptime _: []const u8,
+        _: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        try writer.print("<expr>", .{});
+    }
+};
+
 pub const Policy = struct {
     annotations: []const Annotation,
     effect: Effect,
     scope: Scope,
-    // todo conditions
+    when: ?Expr = null,
+    unless: ?Expr = null,
 
     pub fn format(
         self: @This(),
@@ -188,10 +228,11 @@ pub const Policy = struct {
         _: std.fmt.FormatOptions,
         writer: anytype,
     ) !void {
-        for (self.annotations) |a| {
-            try writer.print("{s}\n", .{a});
-        }
-        try writer.print("{s}{s};", .{ @tagName(self.effect), self.scope });
+        for (self.annotations) |a| try writer.print("{s}\n", .{a});
+        try writer.print("{s}{s}", .{ @tagName(self.effect), self.scope });
+        if (self.when) |w| try writer.print("when {{ {s} }}", .{w});
+        if (self.unless) |u| try writer.print("unless {{ {s} }}", .{u});
+        try writer.print(";", .{});
     }
 };
 
