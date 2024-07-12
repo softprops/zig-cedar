@@ -124,28 +124,21 @@ const Builtin = struct {
 // order longest to shortest as a parser optimization
 const BUILTINS = [_]Builtin{
     // keywords
+    .{ .name = "?principal", .kind = .@"?principal" },
+    .{ .name = "?resource", .kind = .@"?resource" },
     .{ .name = "principal", .kind = .principal },
     .{ .name = "resource", .kind = .resource },
+    .{ .name = "context", .kind = .context },
     .{ .name = "permit", .kind = .permit },
     .{ .name = "forbid", .kind = .forbid },
     .{ .name = "action", .kind = .action },
-    .{ .name = "?principal", .kind = .@"?principal" },
-    .{ .name = "?resource", .kind = .@"?resource" },
-    .{ .name = "context", .kind = .context },
-
-    .{ .name = "in", .kind = .in },
     .{ .name = "like", .kind = .like },
     .{ .name = "has", .kind = .has },
+    .{ .name = "in", .kind = .in },
     .{ .name = "::", .kind = .path_separator },
-
-    // lit
     .{ .name = "true", .kind = .true },
     .{ .name = "false", .kind = .false },
-
-    // relop
     .{ .name = "==", .kind = .eq },
-
-    // syntax
     .{ .name = "@", .kind = .at },
     .{ .name = "[", .kind = .list_open },
     .{ .name = "]", .kind = .list_close },
