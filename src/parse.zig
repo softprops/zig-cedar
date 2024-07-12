@@ -13,8 +13,11 @@ const Token = struct {
         action,
         resource,
         @"?resource",
+        context,
 
         in,
+        has,
+        like,
 
         // conditions
         when,
@@ -36,8 +39,8 @@ const Token = struct {
         at, // @
 
         // literals
-        lit_true,
-        lit_false,
+        true,
+        false,
 
         // relop
         eq,
@@ -128,9 +131,16 @@ const BUILTINS = [_]Builtin{
     .{ .name = "action", .kind = .action },
     .{ .name = "?principal", .kind = .@"?principal" },
     .{ .name = "?resource", .kind = .@"?resource" },
+    .{ .name = "context", .kind = .context },
 
     .{ .name = "in", .kind = .in },
+    .{ .name = "like", .kind = .like },
+    .{ .name = "has", .kind = .has },
     .{ .name = "::", .kind = .path_separator },
+
+    // lit
+    .{ .name = "true", .kind = .true },
+    .{ .name = "false", .kind = .false },
 
     // relop
     .{ .name = "==", .kind = .eq },
@@ -279,7 +289,7 @@ fn lexIdent(source: []const u8, index: usize) struct { nextPosition: usize, toke
 // skip whitespace,new lines, and commands
 fn skip(source: []const u8, index: usize) !usize {
     var next = index;
-    // skip over whitespace and new lines
+    // WHITESPC ::= Unicode whitespace
     while (source[next] == ' ' or
         source[next] == '\n' or
         source[next] == '\t' or
@@ -291,7 +301,6 @@ fn skip(source: []const u8, index: usize) !usize {
         }
     }
 
-    // skip over comment
     // COMMENT ::= '//' ~NEWLINE* NEWLINE
     while (source[next] == '/') {
         if (next + 1 != source.len and source[next + 1] == '/') {
@@ -494,6 +503,17 @@ fn parse(allocator: std.mem.Allocator, tokens: []Token) !types.PolicySet {
 
         // Condition ::= ('when' | 'unless') '{' Expr '}'
 
+        var when: ?types.Expr = null;
+        var unless: ?types.Expr = null;
+        while (try parseCondition(tokens, i)) |cond| {
+            i = cond.nextIndex;
+            if (cond.when) {
+                when = cond.expr;
+            } else {
+                unless = cond.expr;
+            }
+        }
+
         if (!matches(tokens, i, .semicolon)) {
             return error.ExpectedSemiColon;
         }
@@ -507,6 +527,8 @@ fn parse(allocator: std.mem.Allocator, tokens: []Token) !types.PolicySet {
                 .action = action,
                 .resource = resource,
             },
+            .when = when,
+            .unless = unless,
         });
     }
 
@@ -574,7 +596,7 @@ fn parseAnnotation(tokens: []Token, index: usize) !?struct { nextIndex: usize, a
 }
 
 // Condition ::= ('when' | 'unless') '{' Expr '}'
-fn parseCondition(tokens: []Token, index: usize) !?struct { nextIndex: usize, when: bool, annotation: types.Expr } {
+fn parseCondition(tokens: []Token, index: usize) !?struct { nextIndex: usize, when: bool, expr: types.Expr } {
     var i = index;
     const when = matches(tokens, index, .when);
     const unless = matches(tokens, index, .unless);
@@ -599,9 +621,71 @@ fn parseCondition(tokens: []Token, index: usize) !?struct { nextIndex: usize, wh
     return null;
 }
 
+// Expr ::= Or | 'if' Expr 'then' Expr 'else' Expr
 fn parseExpr(tokens: []Token, index: usize) !?struct { nextIndex: usize, expr: types.Expr } {
-    _ = tokens; // autofix
-    _ = index; // autofix
+    var i = index;
+    // 'if' Expr 'then' Expr 'else' Expr
+    if (matches(tokens, index, .@"if")) {
+        i = i + 1;
+
+        if (try parseExpr(tokens, i)) |exp| {
+            i = exp.nextIndex;
+            // todo: capture expr
+        } else {
+            return error.ExpectedExpr;
+        }
+
+        if (!matches(tokens, index, .then)) {
+            return error.ExpectedThen;
+        }
+        i = i + 1;
+
+        if (try parseExpr(tokens, i)) |exp| {
+            i = exp.nextIndex;
+            // todo: capture expr
+        } else {
+            return error.ExpectedExpr;
+        }
+
+        if (!matches(tokens, index, .@"else")) {
+            return error.ExpectedElse;
+        }
+
+        if (try parseExpr(tokens, i)) |exp| {
+            i = exp.nextIndex;
+            // todo: capture expr
+        } else {
+            return error.ExpectedExpr;
+        }
+
+        i = i + 1;
+    } else {
+        // ...
+        // Or ::= And {'||' And}
+        // And ::= Relation {'&&' Relation}
+        // Relation ::= Add [RELOP Add] | Add 'has' (IDENT | STR) | Add 'like' PAT | Add 'is' Path ('in' Add)?
+        // Add ::= Mult {('+' | '-') Mult}
+        // Mult ::= Unary { '*' Unary}
+        // Unary ::= ['!' | '-']x4 Member
+        // Member ::= Primary {Access}
+        // Access ::= '.' IDENT ['(' [ExprList] ')'] | '[' STR ']'
+        // Primary ::= LITERAL
+        //   | VAR
+        //   | Entity
+        //   | ExtFun '(' [ExprList] ')'
+        //   | '(' Expr ')'
+        //   | '[' [ExprList] ']'
+        //   | '{' [RecInits] '}'
+        // RecInits ::= (IDENT | STR) ':' Expr {',' (IDENT | STR) ':' Expr}
+        // RELOP ::= '<' | '<=' | '>=' | '>' | '!=' | '==' | 'in'
+        // PAT ::= STR with `\*` allowed as an escape
+        // LITERAL ::= BOOL | INT | STR
+        // BOOL ::= 'true' | 'false'
+        // INT ::= '-'? ['0'-'9']+
+        // RESERVED ::= BOOL | 'if' | 'then' | 'else' | 'in' | 'like' | 'has'
+        // VAR ::= 'principal' | 'action' | 'resource' | 'context'
+        //
+    }
     return null;
 }
 
