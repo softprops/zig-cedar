@@ -6,7 +6,7 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var policySet = try cedar.parsePolicies(
+    var policySet = try cedar.parse(
         allocator,
         \\permit (
         \\    principal == PhotoApp::User::"alice",

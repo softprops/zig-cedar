@@ -343,7 +343,7 @@ fn skip(source: []const u8, index: usize) !usize {
 // parsing
 
 /// parse a set of policies from a string
-pub fn parsePolcies(allocator: std.mem.Allocator, source: []const u8) !types.PolicySet {
+pub fn parse(allocator: std.mem.Allocator, source: []const u8) !types.PolicySet {
     var tokens = std.ArrayList(Token).init(allocator);
     defer tokens.deinit();
     try lex(source, &tokens);
@@ -838,9 +838,9 @@ fn matches(tokens: []Token, index: usize, kind: Token.Kind) bool {
     return if (index >= tokens.len) false else tokens[index].kind == kind;
 }
 
-test parsePolcies {
+test parse {
     const allocator = std.testing.allocator;
-    var policySet = try parsePolcies(
+    var policySet = try parse(
         allocator,
         \\// a multi line
         \\// comment
