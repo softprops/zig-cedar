@@ -391,9 +391,7 @@ fn parsePolicy(allocator: std.mem.Allocator, tokens: []Token, index: usize) !str
     const effect = effectRes.effect;
     i = effectRes.nextIndex;
 
-    if (!matches(tokens, i, .left_paren)) {
-        return error.ExpectedOpenParen;
-    }
+    try expectMatch(tokens, i, .left_paren, error.ExpectedOpenParen);
     i = i + 1;
 
     //  Scope ::= Principal ',' Action ',' Resource
@@ -402,27 +400,21 @@ fn parsePolicy(allocator: std.mem.Allocator, tokens: []Token, index: usize) !str
     const principal = principalRes.principal;
     i = principalRes.nextIndex;
 
-    if (!matches(tokens, i, .comma)) {
-        return error.ExpectedComma;
-    }
+    try expectMatch(tokens, i, .comma, error.ExpectedComma);
     i = i + 1;
 
     const actionRes = try parseAction(allocator, tokens, i);
     const action = actionRes.action;
     i = actionRes.nextIndex;
 
-    if (!matches(tokens, i, .comma)) {
-        return error.ExpectedComma;
-    }
+    try expectMatch(tokens, i, .comma, error.ExpectedComma);
     i = i + 1;
 
     const resourceRes = try parseResource(allocator, tokens, i);
     const resource = resourceRes.resource;
     i = resourceRes.nextIndex;
 
-    if (!matches(tokens, i, .right_paren)) {
-        return error.ExpectedCloseParen;
-    }
+    try expectMatch(tokens, i, .right_paren, error.ExpectedCloseParen);
     i = i + 1;
 
     // Condition ::= ('when' | 'unless') '{' Expr '}'
@@ -437,10 +429,7 @@ fn parsePolicy(allocator: std.mem.Allocator, tokens: []Token, index: usize) !str
         }
     }
 
-    if (!matches(tokens, i, .semicolon)) {
-        std.debug.print("expected semicolon by was '{s}'\n", .{tokens[i].value()});
-        return error.ExpectedSemiColon;
-    }
+    try expectMatch(tokens, i, .semicolon, error.ExpectedSemiColon);
     i = i + 1;
 
     return .{
@@ -477,9 +466,7 @@ fn parseEffect(tokens: []Token, index: usize) !struct { nextIndex: usize, effect
 // Principal ::= 'principal' [(['is' PATH] ['in' (Entity | '?principal')]) | ('==' (Entity | '?principal'))]
 fn parsePrincipal(allocator: std.mem.Allocator, tokens: []Token, index: usize) !struct { nextIndex: usize, principal: types.Principal } {
     var i = index;
-    if (!matches(tokens, i, .principal)) {
-        return error.ExpectedPricipal;
-    }
+    try expectMatch(tokens, i, .principal, error.ExpectedPricipal);
     i = i + 1;
 
     var principal = types.Principal.any();
@@ -524,9 +511,7 @@ fn parsePrincipal(allocator: std.mem.Allocator, tokens: []Token, index: usize) !
 // Action ::= 'action' [( '==' Entity | 'in' ('[' EntList ']' | Entity) )]
 fn parseAction(allocator: std.mem.Allocator, tokens: []Token, index: usize) !struct { nextIndex: usize, action: types.Action } {
     var i = index;
-    if (!matches(tokens, i, .action)) {
-        return error.ExpectedAction;
-    }
+    try expectMatch(tokens, i, .action, error.ExpectedAction);
     i = i + 1;
 
     var action = types.Action.any();
@@ -553,9 +538,7 @@ fn parseAction(allocator: std.mem.Allocator, tokens: []Token, index: usize) !str
                 i = list.nextIndex;
                 // _ = list; // autofix
             }
-            if (!matches(tokens, i, .list_close)) {
-                return error.ExpectedListClose;
-            }
+            try expectMatch(tokens, i, .list_close, error.ExpectedListClose);
             i = i + 1;
         } else if (try parseEntity(allocator, tokens, i)) |entity| {
             i = entity.nextIndex;
@@ -573,9 +556,7 @@ fn parseAction(allocator: std.mem.Allocator, tokens: []Token, index: usize) !str
 // Resource ::= 'resource' [(['is' PATH] ['in' (Entity | '?resource')]) | ('==' (Entity | '?resource'))]
 fn parseResource(allocator: std.mem.Allocator, tokens: []Token, index: usize) !struct { nextIndex: usize, resource: types.Resource } {
     var i = index;
-    if (!matches(tokens, i, .resource)) {
-        return error.ExpectedResource;
-    }
+    try expectMatch(tokens, i, .resource, error.ExpectedResource);
     i = i + 1;
 
     var resource = types.Resource.any();
@@ -622,9 +603,7 @@ fn parseEntity(allocator: std.mem.Allocator, tokens: []Token, index: usize) !?st
         i = pathRes.nextIndex;
         const path = pathRes.path;
         // STR ::= Fully-escaped Unicode surrounded by '"'s
-        if (!matches(tokens, i, .string)) {
-            return error.ExpectedEntityId;
-        }
+        try expectMatch(tokens, i, .string, error.ExpectedEntityId);
         i = i + 1;
         return .{
             .nextIndex = i,
@@ -643,9 +622,7 @@ fn parsePath(allocator: std.mem.Allocator, tokens: []Token, index: usize) !?stru
         try list.append(tokens[i].value());
         i = i + 1;
 
-        if (!matches(tokens, i, .path_separator)) {
-            return error.ExpectedPathSeparator;
-        }
+        try expectMatch(tokens, i, .path_separator, error.ExpectedPathSeparator);
         i = i + 1;
     }
 
@@ -664,26 +641,18 @@ fn parseAnnotation(tokens: []Token, index: usize) !?struct { nextIndex: usize, a
     var i = index;
     if (matches(tokens, i, .at)) {
         i = i + 1;
-        if (!matches(tokens, i, .ident)) {
-            return error.ExpectedOpenParen;
-        }
+        try expectMatch(tokens, i, .ident, error.ExpectedIdentifier);
         const name = tokens[i].value();
         i = i + 1;
 
-        if (!matches(tokens, i, .left_paren)) {
-            return error.ExpectedOpenParen;
-        }
+        try expectMatch(tokens, i, .left_paren, error.ExpectedOpenParen);
         i = i + 1;
 
-        if (!matches(tokens, i, .string)) {
-            return error.ExpectedString;
-        }
+        try expectMatch(tokens, i, .string, error.ExpectedString);
         const value = tokens[i].value();
         i = i + 1;
 
-        if (!matches(tokens, i, .right_paren)) {
-            return error.ExpectedCloseParen;
-        }
+        try expectMatch(tokens, i, .right_paren, error.ExpectedCloseParen);
         i = i + 1;
 
         return .{
@@ -702,9 +671,7 @@ fn parseCondition(allocator: std.mem.Allocator, tokens: []Token, index: usize) !
     const unless = matches(tokens, index, .unless);
     if (when or unless) {
         i = i + 1;
-        if (!matches(tokens, i, .left_brace)) {
-            return error.ExpectedLeftBrace;
-        }
+        try expectMatch(tokens, i, .left_brace, error.ExpectedLeftBrace);
         i = i + 1;
 
         const exprRes = (try parseExpr(allocator, tokens, i)) orelse {
@@ -713,9 +680,7 @@ fn parseCondition(allocator: std.mem.Allocator, tokens: []Token, index: usize) !
         i = exprRes.nextIndex;
         const expr = exprRes.expr;
 
-        if (!matches(tokens, i, .right_brace)) {
-            return error.ExpectedRightBrace;
-        }
+        try expectMatch(tokens, i, .right_brace, error.ExpectedRightBrace);
         i = i + 1;
 
         return .{
@@ -740,9 +705,7 @@ fn parseExpr(allocator: std.mem.Allocator, tokens: []Token, index: usize) !?stru
         i = expr1Res.nextIndex;
         const expr1 = expr1Res.expr;
 
-        if (!matches(tokens, index, .then)) {
-            return error.ExpectedThen;
-        }
+        try expectMatch(tokens, i, .then, error.ExpectedThen);
         i = i + 1;
 
         const expr2Res = (try parseExpr(allocator, tokens, i)) orelse {
@@ -751,9 +714,7 @@ fn parseExpr(allocator: std.mem.Allocator, tokens: []Token, index: usize) !?stru
         i = expr2Res.nextIndex;
         const expr2 = expr2Res.expr;
 
-        if (!matches(tokens, index, .@"else")) {
-            return error.ExpectedElse;
-        }
+        try expectMatch(tokens, i, .@"else", error.ExpectedElse);
 
         const expr3Res = (try parseExpr(allocator, tokens, i)) orelse {
             return error.ExpectedExpr;
@@ -834,8 +795,22 @@ fn parseEntityList(
     return null;
 }
 
+/// return true of the token at a given index, if there is a token at this index, matches the specified kind
 fn matches(tokens: []Token, index: usize, kind: Token.Kind) bool {
     return if (index >= tokens.len) false else tokens[index].kind == kind;
+}
+
+/// returns err if the token at a given index doesn't match
+fn expectMatch(tokens: []Token, index: usize, kind: Token.Kind, err: anyerror) !void {
+    // todo: better diagnostic UX
+    if (index >= tokens.len) {
+        std.debug.print("expected token of kind {s} at index {d} but no token at that index exists\n", .{ @tagName(kind), index });
+        return err;
+    }
+    if (tokens[index].kind != kind) {
+        std.debug.print("expected token of kind {s} at index {d} but found {s} instead\n", .{ @tagName(kind), index, @tagName(tokens[index].kind) });
+        return err;
+    }
 }
 
 test parse {
