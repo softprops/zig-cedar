@@ -802,13 +802,13 @@ fn matches(tokens: []Token, index: usize, kind: Token.Kind) bool {
 
 /// returns err if the token at a given index doesn't match
 fn expectMatch(tokens: []Token, index: usize, kind: Token.Kind, err: anyerror) !void {
-    // todo: better diagnostic UX
     if (index >= tokens.len) {
         std.debug.print("expected token of kind {s} at index {d} but no token at that index exists\n", .{ @tagName(kind), index });
         return err;
     }
     if (tokens[index].kind != kind) {
         std.debug.print("expected token of kind {s} at index {d} but found {s} instead\n", .{ @tagName(kind), index, @tagName(tokens[index].kind) });
+        tokens[index].debug("unexpected token");
         return err;
     }
 }
