@@ -134,7 +134,9 @@ const BUILTINS = [_]Builtin{
     .{ .name = "permit", .kind = .permit },
     .{ .name = "forbid", .kind = .forbid },
     .{ .name = "action", .kind = .action },
+    .{ .name = "unless", .kind = .unless },
     .{ .name = "like", .kind = .like },
+    .{ .name = "when", .kind = .when },
     .{ .name = "has", .kind = .has },
     .{ .name = "in", .kind = .in },
     .{ .name = "::", .kind = .path_separator },
@@ -356,6 +358,7 @@ fn parsePolicySet(allocator: std.mem.Allocator, tokens: []Token) !types.PolicySe
         .policies = undefined,
     };
     policySet.arena.* = std.heap.ArenaAllocator.init(allocator);
+    errdefer policySet.deinit();
 
     var policies = std.ArrayList(types.Policy).init(policySet.arena.allocator());
     defer policies.deinit();
@@ -395,7 +398,7 @@ fn parsePolicy(allocator: std.mem.Allocator, tokens: []Token, index: usize) !str
 
     //  Scope ::= Principal ',' Action ',' Resource
 
-    const principalRes = try parsePrincipal(tokens, i);
+    const principalRes = try parsePrincipal(allocator, tokens, i);
     const principal = principalRes.principal;
     i = principalRes.nextIndex;
 
@@ -413,7 +416,7 @@ fn parsePolicy(allocator: std.mem.Allocator, tokens: []Token, index: usize) !str
     }
     i = i + 1;
 
-    const resourceRes = try parseResource(tokens, i);
+    const resourceRes = try parseResource(allocator, tokens, i);
     const resource = resourceRes.resource;
     i = resourceRes.nextIndex;
 
@@ -425,7 +428,7 @@ fn parsePolicy(allocator: std.mem.Allocator, tokens: []Token, index: usize) !str
     // Condition ::= ('when' | 'unless') '{' Expr '}'
     var when: ?types.Expr = null;
     var unless: ?types.Expr = null;
-    while (try parseCondition(tokens, i)) |cond| {
+    while (try parseCondition(allocator, tokens, i)) |cond| {
         i = cond.nextIndex;
         if (cond.when) {
             when = cond.expr;
@@ -435,6 +438,7 @@ fn parsePolicy(allocator: std.mem.Allocator, tokens: []Token, index: usize) !str
     }
 
     if (!matches(tokens, i, .semicolon)) {
+        std.debug.print("expected semicolon by was '{s}'\n", .{tokens[i].value()});
         return error.ExpectedSemiColon;
     }
     i = i + 1;
@@ -471,7 +475,7 @@ fn parseEffect(tokens: []Token, index: usize) !struct { nextIndex: usize, effect
 }
 
 // Principal ::= 'principal' [(['is' PATH] ['in' (Entity | '?principal')]) | ('==' (Entity | '?principal'))]
-fn parsePrincipal(tokens: []Token, index: usize) !struct { nextIndex: usize, principal: types.Principal } {
+fn parsePrincipal(allocator: std.mem.Allocator, tokens: []Token, index: usize) !struct { nextIndex: usize, principal: types.Principal } {
     var i = index;
     if (!matches(tokens, i, .principal)) {
         return error.ExpectedPricipal;
@@ -482,7 +486,7 @@ fn parsePrincipal(tokens: []Token, index: usize) !struct { nextIndex: usize, pri
 
     if (matches(tokens, i, .in)) {
         i = i + 1;
-        if (try parseEntity(tokens, i)) |entity| {
+        if (try parseEntity(allocator, tokens, i)) |entity| {
             i = entity.nextIndex;
             principal = types.Principal.in(
                 types.Ref.id(entity.entity),
@@ -497,7 +501,7 @@ fn parsePrincipal(tokens: []Token, index: usize) !struct { nextIndex: usize, pri
     // '==' (Entity | '?principal')
     else if (matches(tokens, i, .eq)) {
         i = i + 1;
-        if (try parseEntity(tokens, i)) |entity| {
+        if (try parseEntity(allocator, tokens, i)) |entity| {
             i = entity.nextIndex;
             principal = types.Principal.eq(
                 types.Ref.id(entity.entity),
@@ -530,7 +534,7 @@ fn parseAction(allocator: std.mem.Allocator, tokens: []Token, index: usize) !str
     //  '==' Entity
     if (matches(tokens, i, .eq)) {
         i = i + 1;
-        if (try parseEntity(tokens, i)) |entity| {
+        if (try parseEntity(allocator, tokens, i)) |entity| {
             i = entity.nextIndex;
             action = types.Action.eq(
                 types.Ref.id(entity.entity),
@@ -553,7 +557,7 @@ fn parseAction(allocator: std.mem.Allocator, tokens: []Token, index: usize) !str
                 return error.ExpectedListClose;
             }
             i = i + 1;
-        } else if (try parseEntity(tokens, i)) |entity| {
+        } else if (try parseEntity(allocator, tokens, i)) |entity| {
             i = entity.nextIndex;
             action = types.Action.in(
                 types.Ref.id(entity.entity),
@@ -567,7 +571,7 @@ fn parseAction(allocator: std.mem.Allocator, tokens: []Token, index: usize) !str
 }
 
 // Resource ::= 'resource' [(['is' PATH] ['in' (Entity | '?resource')]) | ('==' (Entity | '?resource'))]
-fn parseResource(tokens: []Token, index: usize) !struct { nextIndex: usize, resource: types.Resource } {
+fn parseResource(allocator: std.mem.Allocator, tokens: []Token, index: usize) !struct { nextIndex: usize, resource: types.Resource } {
     var i = index;
     if (!matches(tokens, i, .resource)) {
         return error.ExpectedResource;
@@ -579,7 +583,7 @@ fn parseResource(tokens: []Token, index: usize) !struct { nextIndex: usize, reso
     // '==' (Entity | '?resource')
     if (matches(tokens, i, .eq)) {
         i = i + 1;
-        if (try parseEntity(tokens, i)) |entity| {
+        if (try parseEntity(allocator, tokens, i)) |entity| {
             i = entity.nextIndex;
             resource = types.Resource.eq(types.Ref.id(entity.entity));
         } else if (matches(tokens, i, .@"?resource")) {
@@ -591,7 +595,7 @@ fn parseResource(tokens: []Token, index: usize) !struct { nextIndex: usize, reso
         // 'in' (Entity | '?resource')
     } else if (matches(tokens, i, .in)) {
         i = i + 1;
-        if (try parseEntity(tokens, i)) |entity| {
+        if (try parseEntity(allocator, tokens, i)) |entity| {
             i = entity.nextIndex;
             resource = types.Resource.in(
                 types.Ref.id(
@@ -612,15 +616,11 @@ fn parseResource(tokens: []Token, index: usize) !struct { nextIndex: usize, reso
 }
 
 // Entity ::= Path '::' STR
-fn parseEntity(tokens: []Token, index: usize) !?struct { nextIndex: usize, entity: types.EntityUID } {
+fn parseEntity(allocator: std.mem.Allocator, tokens: []Token, index: usize) !?struct { nextIndex: usize, entity: types.EntityUID } {
     var i = index;
-    // Path ::= IDENT {'::' IDENT}
-    if (matches(tokens, i, .ident)) {
-        i = i + 1;
-        if (!matches(tokens, i, .path_separator)) {
-            return error.ExpectedPathSeparator;
-        }
-        i = i + 1;
+    if (try parsePath(allocator, tokens, i)) |pathRes| {
+        i = pathRes.nextIndex;
+        const path = pathRes.path;
         // STR ::= Fully-escaped Unicode surrounded by '"'s
         if (!matches(tokens, i, .string)) {
             return error.ExpectedEntityId;
@@ -628,10 +628,35 @@ fn parseEntity(tokens: []Token, index: usize) !?struct { nextIndex: usize, entit
         i = i + 1;
         return .{
             .nextIndex = i,
-            .entity = types.EntityUID.init(tokens[i - 3].value(), tokens[i - 1].value()),
+            .entity = types.EntityUID.init(path, tokens[i - 1].value()),
         };
     }
     return null;
+}
+
+// Path ::= IDENT {'::' IDENT}
+fn parsePath(allocator: std.mem.Allocator, tokens: []Token, index: usize) !?struct { nextIndex: usize, path: []const u8 } {
+    var i = index;
+    var list = std.ArrayList([]const u8).init(allocator);
+    defer list.deinit();
+    while (matches(tokens, i, .ident)) {
+        try list.append(tokens[i].value());
+        i = i + 1;
+
+        if (!matches(tokens, i, .path_separator)) {
+            return error.ExpectedPathSeparator;
+        }
+        i = i + 1;
+    }
+
+    if (list.items.len < 1) {
+        return null;
+    }
+
+    return .{
+        .nextIndex = i,
+        .path = try std.mem.join(allocator, "::", try list.toOwnedSlice()),
+    };
 }
 
 // Annotation ::= '@'IDENT'('STR')'
@@ -670,8 +695,9 @@ fn parseAnnotation(tokens: []Token, index: usize) !?struct { nextIndex: usize, a
 }
 
 // Condition ::= ('when' | 'unless') '{' Expr '}'
-fn parseCondition(tokens: []Token, index: usize) !?struct { nextIndex: usize, when: bool, expr: types.Expr } {
+fn parseCondition(allocator: std.mem.Allocator, tokens: []Token, index: usize) !?struct { nextIndex: usize, when: bool, expr: types.Expr } {
     var i = index;
+
     const when = matches(tokens, index, .when);
     const unless = matches(tokens, index, .unless);
     if (when or unless) {
@@ -681,58 +707,64 @@ fn parseCondition(tokens: []Token, index: usize) !?struct { nextIndex: usize, wh
         }
         i = i + 1;
 
-        if (try parseExpr(tokens, i)) |expr| {
-            i = expr.nextIndex;
-        } else {
+        const exprRes = (try parseExpr(allocator, tokens, i)) orelse {
             return error.ExpectedExpr;
-        }
+        };
+        i = exprRes.nextIndex;
+        const expr = exprRes.expr;
 
         if (!matches(tokens, i, .right_brace)) {
             return error.ExpectedRightBrace;
         }
         i = i + 1;
+
+        return .{
+            .nextIndex = i,
+            .when = when,
+            .expr = expr,
+        };
     }
     return null;
 }
 
 // Expr ::= Or | 'if' Expr 'then' Expr 'else' Expr
-fn parseExpr(tokens: []Token, index: usize) !?struct { nextIndex: usize, expr: types.Expr } {
+fn parseExpr(allocator: std.mem.Allocator, tokens: []Token, index: usize) !?struct { nextIndex: usize, expr: types.Expr } {
     var i = index;
     // 'if' Expr 'then' Expr 'else' Expr
     if (matches(tokens, index, .@"if")) {
         i = i + 1;
 
-        if (try parseExpr(tokens, i)) |exp| {
-            i = exp.nextIndex;
-            // todo: capture expr
-        } else {
+        const expr1Res = (try parseExpr(allocator, tokens, i)) orelse {
             return error.ExpectedExpr;
-        }
+        };
+        i = expr1Res.nextIndex;
+        const expr1 = expr1Res.expr;
 
         if (!matches(tokens, index, .then)) {
             return error.ExpectedThen;
         }
         i = i + 1;
 
-        if (try parseExpr(tokens, i)) |exp| {
-            i = exp.nextIndex;
-            // todo: capture expr
-        } else {
+        const expr2Res = (try parseExpr(allocator, tokens, i)) orelse {
             return error.ExpectedExpr;
-        }
+        };
+        i = expr2Res.nextIndex;
+        const expr2 = expr2Res.expr;
 
         if (!matches(tokens, index, .@"else")) {
             return error.ExpectedElse;
         }
 
-        if (try parseExpr(tokens, i)) |exp| {
-            i = exp.nextIndex;
-            // todo: capture expr
-        } else {
+        const expr3Res = (try parseExpr(allocator, tokens, i)) orelse {
             return error.ExpectedExpr;
-        }
+        };
+        i = expr3Res.nextIndex;
+        const expr3 = expr3Res.expr;
 
-        i = i + 1;
+        return .{
+            .nextIndex = i,
+            .expr = types.Expr.ite(expr1, expr2, expr3),
+        };
     } else {
         // ...
         // Or ::= And {'||' And}
@@ -759,6 +791,19 @@ fn parseExpr(tokens: []Token, index: usize) !?struct { nextIndex: usize, expr: t
         // RESERVED ::= BOOL | 'if' | 'then' | 'else' | 'in' | 'like' | 'has'
         // VAR ::= 'principal' | 'action' | 'resource' | 'context'
         //
+
+        // cheat for now
+        const arg1 = types.Expr.variable(std.meta.stringToEnum(types.Expr.Var, tokens[i].value()).?);
+        i = i + 1;
+        // skip over in
+        i = i + 1;
+        const arg2Res = (try parseEntity(allocator, tokens, i)).?;
+        i = arg2Res.nextIndex;
+        const arg2 = types.Expr.literal(.{ .entity = arg2Res.entity });
+        return .{
+            .nextIndex = i,
+            .expr = types.Expr.in(arg1, arg2),
+        };
     }
     return null;
 }
@@ -775,7 +820,7 @@ fn parseEntityList(
     var i: usize = index;
     var list = std.ArrayList(types.EntityUID).init(allocator);
     defer list.deinit();
-    while (try parseEntity(tokens, i)) |ent| {
+    while (try parseEntity(allocator, tokens, i)) |ent| {
         i = ent.nextIndex;
         try list.append(ent.entity);
         if (!matches(tokens, i, .comma)) {

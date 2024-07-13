@@ -178,18 +178,44 @@ pub const Annotation = struct {
 
 // https://github.com/cedar-policy/cedar/blob/b653e6c0627423b24bed50ee664b0302c512f16a/cedar-policy-core/src/ast/expr.rs#L48
 pub const Expr = union(enum) {
-    literal: []const u8,
-    variable: []const u8,
-    slot: []const u8,
-    @"if": struct { @"if": *Expr, then: *Expr, @"else": *Expr },
-    @"and": struct { left: *Expr, right: *Expr },
-    @"or": struct { left: *Expr, right: *Expr },
+    pub const Literal = union(enum) {
+        bool: bool,
+        long: u32,
+        string: []const u8,
+        entity: EntityUID,
+    };
+    pub const Var = enum {
+        principal,
+        action,
+        resource,
+        context,
+    };
 
-    pub fn literal(value: []const u8) @This() {
+    pub const BinaryOp = enum {
+        eq,
+        lt,
+        lte,
+        add,
+        sub,
+        mul,
+        in,
+        contains,
+        contains_all,
+        contains_any,
+    };
+    literal: Literal,
+    variable: Var,
+    slot: []const u8,
+    ite: struct { @"if": *const Expr, then: *const Expr, @"else": *const Expr },
+    @"and": struct { left: *const Expr, right: *const Expr },
+    @"or": struct { left: *const Expr, right: *const Expr },
+    binary: struct { op: BinaryOp, arg1: *const Expr, arg2: *const Expr },
+
+    pub fn literal(value: Literal) @This() {
         return .{ .literal = value };
     }
 
-    pub fn variable(value: []const u8) @This() {
+    pub fn variable(value: Var) @This() {
         return .{ .variable = value };
     }
 
@@ -203,6 +229,19 @@ pub const Expr = union(enum) {
 
     pub fn @"or"(l: Expr, r: Expr) @This() {
         return .{ .@"or" = .{ .left = l, .right = r } };
+    }
+
+    /// if .. then .. else ..
+    pub fn ite(i: Expr, t: Expr, e: Expr) @This() {
+        return .{
+            .ite = .{ .@"if" = &i, .then = &t, .@"else" = &e },
+        };
+    }
+
+    pub fn in(arg1: Expr, arg2: Expr) @This() {
+        return .{
+            .binary = .{ .op = .in, .arg1 = &arg1, .arg2 = &arg2 },
+        };
     }
 
     pub fn format(
@@ -230,8 +269,8 @@ pub const Policy = struct {
     ) !void {
         for (self.annotations) |a| try writer.print("{s}\n", .{a});
         try writer.print("{s}{s}", .{ @tagName(self.effect), self.scope });
-        if (self.when) |w| try writer.print("when {{ {s} }}", .{w});
-        if (self.unless) |u| try writer.print("unless {{ {s} }}", .{u});
+        if (self.when) |w| try writer.print(" when {{ {s} }}", .{w});
+        if (self.unless) |u| try writer.print(" unless {{ {s} }}", .{u});
         try writer.print(";", .{});
     }
 };
