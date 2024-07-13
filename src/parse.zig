@@ -47,6 +47,8 @@ const Token = struct {
 
         ident,
         string,
+        pos_int,
+        neg_int,
     };
 
     start: u64,
@@ -159,23 +161,20 @@ fn lex(source: []const u8, tokens: *std.ArrayList(Token)) !void {
             break;
         }
 
-        const keywordRes = lexKeyword(source, i);
-        if (keywordRes.token) |token| {
-            tokens.append(token) catch return error.OOM;
+        if (lexKeyword(source, i)) |keywordRes| {
+            tokens.append(keywordRes.token) catch return error.OOM;
             i = keywordRes.nextPosition;
             continue;
         }
 
-        const stringRes = lexString(source, i);
-        if (stringRes.token) |token| {
-            tokens.append(token) catch return error.OOM;
+        if (lexString(source, i)) |stringRes| {
+            tokens.append(stringRes.token) catch return error.OOM;
             i = stringRes.nextPosition;
             continue;
         }
 
-        const identifierRes = lexIdent(source, i);
-        if (identifierRes.token) |token| {
-            tokens.append(token) catch return error.OOM;
+        if (lexIdent(source, i)) |identifierRes| {
+            tokens.append(identifierRes.token) catch return error.OOM;
             i = identifierRes.nextPosition;
             continue;
         }
@@ -188,7 +187,7 @@ fn lex(source: []const u8, tokens: *std.ArrayList(Token)) !void {
     }
 }
 
-fn lexKeyword(source: []const u8, index: usize) struct { nextPosition: usize, token: ?Token } {
+fn lexKeyword(source: []const u8, index: usize) ?struct { nextPosition: usize, token: Token } {
     var longestLen: usize = 0;
     var kind: Token.Kind = .permit;
     for (BUILTINS) |builtin| {
@@ -205,7 +204,7 @@ fn lexKeyword(source: []const u8, index: usize) struct { nextPosition: usize, to
     }
 
     if (longestLen == 0) {
-        return .{ .nextPosition = 0, .token = null };
+        return null;
     }
 
     return .{
@@ -219,10 +218,10 @@ fn lexKeyword(source: []const u8, index: usize) struct { nextPosition: usize, to
     };
 }
 
-fn lexString(source: []const u8, index: usize) struct { nextPosition: usize, token: ?Token } {
+fn lexString(source: []const u8, index: usize) ?struct { nextPosition: usize, token: Token } {
     var i = index;
     if (source[i] != '\"') {
-        return .{ .nextPosition = 0, .token = null };
+        return null;
     }
     i = i + 1;
 
@@ -238,7 +237,7 @@ fn lexString(source: []const u8, index: usize) struct { nextPosition: usize, tok
     }
 
     if (start == end) {
-        return .{ .nextPosition = 0, .token = null };
+        return null;
     }
 
     return .{
@@ -252,7 +251,7 @@ fn lexString(source: []const u8, index: usize) struct { nextPosition: usize, tok
     };
 }
 
-fn lexIdent(source: []const u8, index: usize) struct { nextPosition: usize, token: ?Token } {
+fn lexIdent(source: []const u8, index: usize) ?struct { nextPosition: usize, token: Token } {
     const start = index;
     var end = index;
     var i = index;
@@ -265,7 +264,7 @@ fn lexIdent(source: []const u8, index: usize) struct { nextPosition: usize, toke
     }
 
     if (start == end) {
-        return .{ .nextPosition = 0, .token = null };
+        return null;
     }
 
     return .{
@@ -275,6 +274,35 @@ fn lexIdent(source: []const u8, index: usize) struct { nextPosition: usize, toke
             .start = start,
             .end = end,
             .kind = .ident,
+        },
+    };
+}
+
+fn lexInt(source: []const u8, index: usize) ?struct { nextPosition: usize, token: ?Token } {
+    const start = index;
+    var end = index;
+    var i = index;
+    var kind = Token.Kind.pos_integer;
+    if (source[i] == '-') {
+        kind = Token.Kind.neg_integer;
+        i = i + 1;
+    }
+    while (source[i] >= '0' and source[i] <= '9') {
+        end = end + 1;
+        i = i + 1;
+    }
+
+    if (start == end) {
+        return null;
+    }
+
+    return .{
+        .nextPosition = end,
+        .token = Token{
+            .source = source,
+            .start = start,
+            .end = end,
+            .kind = kind,
         },
     };
 }
@@ -319,10 +347,10 @@ pub fn parsePolcies(allocator: std.mem.Allocator, source: []const u8) !types.Pol
     try lex(source, &tokens);
     const slice = try tokens.toOwnedSlice();
     defer allocator.free(slice);
-    return try parse(allocator, slice);
+    return try parsePolicySet(allocator, slice);
 }
 
-fn parse(allocator: std.mem.Allocator, tokens: []Token) !types.PolicySet {
+fn parsePolicySet(allocator: std.mem.Allocator, tokens: []Token) !types.PolicySet {
     var policySet = types.PolicySet{
         .arena = try allocator.create(std.heap.ArenaAllocator),
         .policies = undefined,
@@ -334,187 +362,88 @@ fn parse(allocator: std.mem.Allocator, tokens: []Token) !types.PolicySet {
     var i: usize = 0;
 
     while (i < tokens.len) {
-        // Policy ::= {Annotation} Effect '(' Scope ')' {Conditions} ';'
+        const policyRes = try parsePolicy(policySet.arena.allocator(), tokens, i);
+        i = policyRes.nextIndex;
+        try policies.append(policyRes.policy);
+    }
 
-        var annotations = std.ArrayList(types.Annotation).init(policySet.arena.allocator());
-        defer annotations.deinit();
+    policySet.policies = try policies.toOwnedSlice();
 
-        while (try parseAnnotation(tokens, i)) |annot| {
-            i = annot.nextIndex;
-            try annotations.append(annot.annotation);
+    return policySet;
+}
+
+//  Policy ::= {Annotation} Effect '(' Scope ')' {Conditions} ';'
+fn parsePolicy(allocator: std.mem.Allocator, tokens: []Token, index: usize) !struct { nextIndex: usize, policy: types.Policy } {
+    var annotations = std.ArrayList(types.Annotation).init(allocator);
+    defer annotations.deinit();
+
+    var i = index;
+
+    while (try parseAnnotation(tokens, i)) |annot| {
+        i = annot.nextIndex;
+        try annotations.append(annot.annotation);
+    }
+
+    const effectRes = try parseEffect(tokens, i);
+    const effect = effectRes.effect;
+    i = effectRes.nextIndex;
+
+    if (!matches(tokens, i, .left_paren)) {
+        return error.ExpectedOpenParen;
+    }
+    i = i + 1;
+
+    //  Scope ::= Principal ',' Action ',' Resource
+
+    const principalRes = try parsePrincipal(tokens, i);
+    const principal = principalRes.principal;
+    i = principalRes.nextIndex;
+
+    if (!matches(tokens, i, .comma)) {
+        return error.ExpectedComma;
+    }
+    i = i + 1;
+
+    const actionRes = try parseAction(allocator, tokens, i);
+    const action = actionRes.action;
+    i = actionRes.nextIndex;
+
+    if (!matches(tokens, i, .comma)) {
+        return error.ExpectedComma;
+    }
+    i = i + 1;
+
+    const resourceRes = try parseResource(tokens, i);
+    const resource = resourceRes.resource;
+    i = resourceRes.nextIndex;
+
+    if (!matches(tokens, i, .right_paren)) {
+        return error.ExpectedCloseParen;
+    }
+    i = i + 1;
+
+    // Condition ::= ('when' | 'unless') '{' Expr '}'
+    var when: ?types.Expr = null;
+    var unless: ?types.Expr = null;
+    while (try parseCondition(tokens, i)) |cond| {
+        i = cond.nextIndex;
+        if (cond.when) {
+            when = cond.expr;
+        } else {
+            unless = cond.expr;
         }
+    }
 
-        // Effect ::= 'permit' | 'forbid'
-        const forbid = matches(tokens, i, .forbid);
-        const permit = matches(tokens, i, .permit);
-        if (!forbid and !permit) {
-            return error.ExpectedEffect;
-        }
-        i = i + 1;
+    if (!matches(tokens, i, .semicolon)) {
+        return error.ExpectedSemiColon;
+    }
+    i = i + 1;
 
-        if (!matches(tokens, i, .left_paren)) {
-            return error.ExpectedOpenParen;
-        }
-        i = i + 1;
-
-        //  Scope ::= Principal ',' Action ',' Resource
-
-        // Principal ::= 'principal' [(['is' PATH] ['in' (Entity | '?principal')]) | ('==' (Entity | '?principal'))]
-        if (!matches(tokens, i, .principal)) {
-            return error.ExpectedPricipal;
-        }
-        i = i + 1;
-
-        var principal = types.Principal.any();
-
-        if (matches(tokens, i, .in)) {
-            i = i + 1;
-            if (try parseEntity(tokens, i)) |entity| {
-                i = entity.nextIndex;
-                principal = types.Principal.in(
-                    types.Ref.id(entity.entity),
-                );
-            } else if (matches(tokens, i, .@"?principal")) {
-                i = i + 1;
-                principal = types.Principal.in(types.Ref.slot());
-            } else {
-                return error.ExpectedEntityOrSlot;
-            }
-        }
-        // '==' (Entity | '?principal')
-        else if (matches(tokens, i, .eq)) {
-            i = i + 1;
-            if (try parseEntity(tokens, i)) |entity| {
-                i = entity.nextIndex;
-                principal = types.Principal.eq(
-                    types.Ref.id(entity.entity),
-                );
-            } else if (matches(tokens, i, .@"?principal")) {
-                i = i + 1;
-                principal = types.Principal.eq(types.Ref.slot());
-            } else {
-                return error.ExpectedEntity;
-            }
-            // 'in' ('[' EntList ']' | Entity)
-        }
-
-        if (!matches(tokens, i, .comma)) {
-            return error.ExpectedComma;
-        }
-        i = i + 1;
-
-        // Action ::= 'action' [( '==' Entity | 'in' ('[' EntList ']' | Entity) )]
-        if (!matches(tokens, i, .action)) {
-            return error.ExpectedAction;
-        }
-        i = i + 1;
-
-        var action = types.Action.any();
-
-        //  '==' Entity
-        if (matches(tokens, i, .eq)) {
-            i = i + 1;
-            if (try parseEntity(tokens, i)) |entity| {
-                i = entity.nextIndex;
-                action = types.Action.eq(
-                    types.Ref.id(entity.entity),
-                );
-            } else {
-                return error.ExpectedEntity;
-            }
-        }
-        // 'in' ('[' EntList ']' | Entity)
-        else if (matches(tokens, i, .in)) {
-            i = i + 1;
-            // '[' EntList ']'
-            if (matches(tokens, i, .list_open)) {
-                i = i + 1;
-                if (try parseEntityList(policySet.arena.allocator(), tokens, i)) |list| {
-                    i = list.nextIndex;
-                    // _ = list; // autofix
-                }
-                if (!matches(tokens, i, .list_close)) {
-                    return error.ExpectedListClose;
-                }
-                i = i + 1;
-            } else if (try parseEntity(tokens, i)) |entity| {
-                i = entity.nextIndex;
-                action = types.Action.in(
-                    types.Ref.id(entity.entity),
-                );
-            }
-        }
-
-        if (!matches(tokens, i, .comma)) {
-            return error.ExpectedComma;
-        }
-        i = i + 1;
-
-        // Resource ::= 'resource' [(['is' PATH] ['in' (Entity | '?resource')]) | ('==' (Entity | '?resource'))]
-
-        if (!matches(tokens, i, .resource)) {
-            return error.ExpectedResource;
-        }
-        i = i + 1;
-
-        var resource = types.Resource.any();
-
-        // '==' (Entity | '?resource')
-        if (matches(tokens, i, .eq)) {
-            i = i + 1;
-            if (try parseEntity(tokens, i)) |entity| {
-                i = entity.nextIndex;
-                resource = types.Resource.eq(types.Ref.id(entity.entity));
-            } else if (matches(tokens, i, .@"?resource")) {
-                i = i + 1;
-                resource = types.Resource.eq(types.Ref.slot());
-            } else {
-                return error.ExpectedEntityOrSlot;
-            }
-            // 'in' (Entity | '?resource')
-        } else if (matches(tokens, i, .in)) {
-            i = i + 1;
-            if (try parseEntity(tokens, i)) |entity| {
-                i = entity.nextIndex;
-                resource = types.Resource.in(
-                    types.Ref.id(
-                        entity.entity,
-                    ),
-                );
-            } else if (matches(tokens, i, .@"?resource")) {
-                i = i + 1;
-                resource = types.Resource.in(types.Ref.slot());
-            } else {
-                return error.ExpectedEntityOrSlot;
-            }
-        }
-
-        if (!matches(tokens, i, .right_paren)) {
-            return error.ExpectedCloseParen;
-        }
-        i = i + 1;
-
-        // Condition ::= ('when' | 'unless') '{' Expr '}'
-
-        var when: ?types.Expr = null;
-        var unless: ?types.Expr = null;
-        while (try parseCondition(tokens, i)) |cond| {
-            i = cond.nextIndex;
-            if (cond.when) {
-                when = cond.expr;
-            } else {
-                unless = cond.expr;
-            }
-        }
-
-        if (!matches(tokens, i, .semicolon)) {
-            return error.ExpectedSemiColon;
-        }
-        i = i + 1;
-
-        try policies.append(.{
+    return .{
+        .nextIndex = i,
+        .policy = .{
             .annotations = try annotations.toOwnedSlice(),
-            .effect = if (forbid) .forbid else .permit,
+            .effect = effect,
             .scope = .{
                 .principal = principal,
                 .action = action,
@@ -522,12 +451,164 @@ fn parse(allocator: std.mem.Allocator, tokens: []Token) !types.PolicySet {
             },
             .when = when,
             .unless = unless,
-        });
+        },
+    };
+}
+
+// Effect ::= 'permit' | 'forbid'
+fn parseEffect(tokens: []Token, index: usize) !struct { nextIndex: usize, effect: types.Effect } {
+    var i = index;
+    const forbid = matches(tokens, i, .forbid);
+    const permit = matches(tokens, i, .permit);
+    if (!forbid and !permit) {
+        return error.ExpectedEffect;
+    }
+    i = i + 1;
+    return .{
+        .nextIndex = i,
+        .effect = if (forbid) .forbid else .permit,
+    };
+}
+
+// Principal ::= 'principal' [(['is' PATH] ['in' (Entity | '?principal')]) | ('==' (Entity | '?principal'))]
+fn parsePrincipal(tokens: []Token, index: usize) !struct { nextIndex: usize, principal: types.Principal } {
+    var i = index;
+    if (!matches(tokens, i, .principal)) {
+        return error.ExpectedPricipal;
+    }
+    i = i + 1;
+
+    var principal = types.Principal.any();
+
+    if (matches(tokens, i, .in)) {
+        i = i + 1;
+        if (try parseEntity(tokens, i)) |entity| {
+            i = entity.nextIndex;
+            principal = types.Principal.in(
+                types.Ref.id(entity.entity),
+            );
+        } else if (matches(tokens, i, .@"?principal")) {
+            i = i + 1;
+            principal = types.Principal.in(types.Ref.slot());
+        } else {
+            return error.ExpectedEntityOrSlot;
+        }
+    }
+    // '==' (Entity | '?principal')
+    else if (matches(tokens, i, .eq)) {
+        i = i + 1;
+        if (try parseEntity(tokens, i)) |entity| {
+            i = entity.nextIndex;
+            principal = types.Principal.eq(
+                types.Ref.id(entity.entity),
+            );
+        } else if (matches(tokens, i, .@"?principal")) {
+            i = i + 1;
+            principal = types.Principal.eq(types.Ref.slot());
+        } else {
+            return error.ExpectedEntity;
+        }
+        // 'in' ('[' EntList ']' | Entity)
     }
 
-    policySet.policies = try policies.toOwnedSlice();
+    return .{
+        .nextIndex = i,
+        .principal = principal,
+    };
+}
 
-    return policySet;
+// Action ::= 'action' [( '==' Entity | 'in' ('[' EntList ']' | Entity) )]
+fn parseAction(allocator: std.mem.Allocator, tokens: []Token, index: usize) !struct { nextIndex: usize, action: types.Action } {
+    var i = index;
+    if (!matches(tokens, i, .action)) {
+        return error.ExpectedAction;
+    }
+    i = i + 1;
+
+    var action = types.Action.any();
+
+    //  '==' Entity
+    if (matches(tokens, i, .eq)) {
+        i = i + 1;
+        if (try parseEntity(tokens, i)) |entity| {
+            i = entity.nextIndex;
+            action = types.Action.eq(
+                types.Ref.id(entity.entity),
+            );
+        } else {
+            return error.ExpectedEntity;
+        }
+    }
+    // 'in' ('[' EntList ']' | Entity)
+    else if (matches(tokens, i, .in)) {
+        i = i + 1;
+        // '[' EntList ']'
+        if (matches(tokens, i, .list_open)) {
+            i = i + 1;
+            if (try parseEntityList(allocator, tokens, i)) |list| {
+                i = list.nextIndex;
+                // _ = list; // autofix
+            }
+            if (!matches(tokens, i, .list_close)) {
+                return error.ExpectedListClose;
+            }
+            i = i + 1;
+        } else if (try parseEntity(tokens, i)) |entity| {
+            i = entity.nextIndex;
+            action = types.Action.in(
+                types.Ref.id(entity.entity),
+            );
+        }
+    }
+    return .{
+        .nextIndex = i,
+        .action = action,
+    };
+}
+
+// Resource ::= 'resource' [(['is' PATH] ['in' (Entity | '?resource')]) | ('==' (Entity | '?resource'))]
+fn parseResource(tokens: []Token, index: usize) !struct { nextIndex: usize, resource: types.Resource } {
+    var i = index;
+    if (!matches(tokens, i, .resource)) {
+        return error.ExpectedResource;
+    }
+    i = i + 1;
+
+    var resource = types.Resource.any();
+
+    // '==' (Entity | '?resource')
+    if (matches(tokens, i, .eq)) {
+        i = i + 1;
+        if (try parseEntity(tokens, i)) |entity| {
+            i = entity.nextIndex;
+            resource = types.Resource.eq(types.Ref.id(entity.entity));
+        } else if (matches(tokens, i, .@"?resource")) {
+            i = i + 1;
+            resource = types.Resource.eq(types.Ref.slot());
+        } else {
+            return error.ExpectedEntityOrSlot;
+        }
+        // 'in' (Entity | '?resource')
+    } else if (matches(tokens, i, .in)) {
+        i = i + 1;
+        if (try parseEntity(tokens, i)) |entity| {
+            i = entity.nextIndex;
+            resource = types.Resource.in(
+                types.Ref.id(
+                    entity.entity,
+                ),
+            );
+        } else if (matches(tokens, i, .@"?resource")) {
+            i = i + 1;
+            resource = types.Resource.in(types.Ref.slot());
+        } else {
+            return error.ExpectedEntityOrSlot;
+        }
+    }
+    return .{
+        .nextIndex = i,
+        .resource = resource,
+    };
 }
 
 // Entity ::= Path '::' STR
