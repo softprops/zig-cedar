@@ -18,7 +18,7 @@ pub const Authorizer = struct {
         principal: EntityUID,
         action: EntityUID,
         resource: EntityUID,
-        context: Context,
+        context: Context = .{},
         schema: ?Schema = null,
     };
 

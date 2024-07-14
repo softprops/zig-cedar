@@ -1,11 +1,145 @@
 const std = @import("std");
 
+/// https://docs.cedarpolicy.com/policies/syntax-datatypes.html
+pub const CedarType = union(enum) {
+    pub const Attribute = struct { []const u8, CedarType };
+    pub const Record = struct {
+        attributes: []const Attribute,
+        fn get(self: *const @This(), name: []const u8) ?CedarType {
+            for (self.attributes) |attr| {
+                if (std.mem.eql(u8, name, attr.@"0")) {
+                    return attr.@"1";
+                }
+            }
+            return null;
+        }
+    };
+    pub fn Extension(comptime T: type, comptime name: []const u8, parseFn: fn ([]const u8) anyerror!T) type {
+        return struct {
+            name: []const u8,
+            value: T,
+            fn init(value: T) @This() {
+                return .{ .name = name, .value = value };
+            }
+            fn parse(s: []const u8) !@This() {
+                return init(try parseFn(s));
+            }
+        };
+    }
+    /// https://docs.cedarpolicy.com/policies/syntax-datatypes.html#datatype-decimal
+    const Decimal = Extension(f64, "decimal", struct {
+        fn parse(s: []const u8) !f64 {
+            return try std.fmt.parseFloat(f64, s);
+        }
+    }.parse);
+    /// note: only handles ip addresses and not ranges which differs from
+    /// https://docs.cedarpolicy.com/policies/syntax-datatypes.html#datatype-ipaddr
+    const Ipaddr = Extension(std.net.Address, "ipaddr", struct {
+        fn parse(s: []const u8) !std.net.Address {
+            return try std.net.Address.parseIp(s, 0);
+        }
+    }.parse);
+
+    boolean: bool,
+    string: []const u8,
+    long: u64,
+    set: []const CedarType,
+    record: Record,
+    entity: EntityUID,
+    extension: union(enum) {
+        ipaddr: Ipaddr,
+        decimal: Decimal,
+        // register new extensions here
+        unknown: void,
+    },
+
+    pub fn ip(value: std.net.Address) @This() {
+        return .{ .extension = .{ .ipaddr = Ipaddr.init(value) } };
+    }
+
+    pub fn decimal(value: f64) @This() {
+        return .{ .extension = .{ .decimal = Decimal.init(value) } };
+    }
+
+    pub fn unknownExt() @This() {
+        return .{ .extension = .{ .unknown = {} } };
+    }
+
+    pub fn boolean(value: bool) @This() {
+        return .{ .boolean = value };
+    }
+
+    pub fn string(value: []const u8) @This() {
+        return .{ .string = value };
+    }
+
+    pub fn long(value: u64) @This() {
+        return .{ .long = value };
+    }
+
+    pub fn record(attributes: []const Attribute) @This() {
+        return .{ .record = .{ .attributes = attributes } };
+    }
+
+    pub fn set(elems: []const CedarType) @This() {
+        return .{ .set = elems };
+    }
+};
+
+test CedarType {
+    // record + attr access
+    try std.testing.expectEqualStrings(
+        CedarType.record(&.{
+            .{ "name", CedarType.string("alice") },
+        }).record.get("name").?.string,
+        "alice",
+    );
+    try std.testing.expect(
+        CedarType.record(&.{}).record.get("name") == null,
+    );
+    // string
+    try std.testing.expectEqualStrings(
+        CedarType.string("foo").string,
+        "foo",
+    );
+    // boolean
+    try std.testing.expectEqual(CedarType.boolean(true).boolean, true);
+    // long
+    try std.testing.expectEqual(CedarType.long(1).long, 1);
+    // set
+    try std.testing.expectEqual(CedarType.set(
+        &.{
+            CedarType.long(1),
+            CedarType.boolean(false),
+            CedarType.string("str"),
+        },
+    ).set.len, 3);
+    // decimal ext
+    try std.testing.expectEqual(
+        CedarType.decimal(1.0).extension.decimal.value,
+        @as(f64, 1.0),
+    );
+    try std.testing.expectEqual(
+        (try CedarType.Decimal.parse("1.0")).value,
+        @as(f64, 1.0),
+    );
+    // ipaddr ext
+    try std.testing.expectEqual(
+        CedarType.ip(try std.net.Address.parseIp("192.168.1.100", 0)).extension.ipaddr.value.in,
+        (try std.net.Address.parseIp("192.168.1.100", 0)).in,
+    );
+    try std.testing.expectEqual(
+        (try CedarType.Ipaddr.parse("192.168.1.100")).value.in,
+        (try std.net.Address.parseIp("192.168.1.100", 0)).in,
+    );
+}
+
 /// identifies an entity within the system
 pub const EntityUID = struct {
-    ty: []const u8,
+    type: []const u8,
     id: []const u8,
-    pub fn init(ty: []const u8, id: []const u8) @This() {
-        return .{ .ty = ty, .id = id };
+    pub fn init(tp: []const u8, id: []const u8) @This() {
+        return .{ .type = tp, .id = id };
     }
 
     pub fn format(
@@ -14,7 +148,7 @@ pub const EntityUID = struct {
         _: std.fmt.FormatOptions,
         writer: anytype,
     ) !void {
-        try writer.print("{s}::\"{s}\"", .{ self.ty, self.id });
+        try writer.print("{s}::\"{s}\"", .{ self.type, self.id });
     }
 };
 
@@ -306,6 +440,66 @@ pub const Entities = struct {
     //entities: std.AutoHashMap(EntityUID, Entity),
     mode: Mode = .concrete,
 };
+
+pub const EntityJsonUID = union(enum) {
+    id: EntityUID,
+    entity: struct {
+        __entity: EntityUID,
+    },
+
+    // fn normalize(self: @This()) EntityUID {
+    //     return switch (self) {
+    //         .id => |v| v,
+    //         .entity => |v| v.__entity,
+    //     };
+    // }
+
+    // fn jsonParse(self: @This(), allocator: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) std.json.ParseError(@TypeOf(source.*))!@This() {}
+};
+
+const EntityJson = struct {
+    uid: EntityJsonUID,
+    //parents: []const ??
+    //attrs:
+};
+
+test "parse EntityJson" {
+    if (true) {
+        return error.SkipZigTest;
+    }
+    const allocator = std.testing.allocator;
+    var parsed = try std.json.parseFromSlice([]const EntityJson, allocator,
+        \\[
+        \\    {
+        \\        "uid": { "type": "User", "id": "alice" },
+        \\        "attrs": {
+        \\            "department": "HardwareEngineering",
+        \\            "jobLevel": 5,
+        \\            "homeIp": { "__extn": { "fn": "ip", "arg": "222.222.222.7" } },
+        \\            "confidenceScore": { "__extn": { "fn": "decimal", "arg": "33.57" } }
+        \\        },
+        \\        "parents": [
+        \\            { "type": "UserGroup", "id": "alice_friends" },
+        \\            { "type": "UserGroup", "id": "bob_friends" }
+        \\        ]
+        \\    },
+        \\    {
+        \\        "uid": { "type": "User", "id": "ahmad"},
+        \\        "attrs" : {
+        \\            "department": "HardwareEngineering",
+        \\            "jobLevel": 4,
+        \\            "manager": { "__entity": { "type": "User", "id": "alice" } }
+        \\        },
+        \\        "parents": []
+        \\    }
+        \\]
+    , .{
+        .ignore_unknown_fields = true,
+        .allocate = .alloc_always,
+    });
+    defer parsed.deinit();
+    std.debug.print("EntityJson {any}\n", .{parsed.value});
+}
 
 pub const Schema = struct {
     // todo

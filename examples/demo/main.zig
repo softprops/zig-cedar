@@ -28,12 +28,10 @@ pub fn main() !void {
         std.debug.print("parsed policy {s}\n", .{p});
     }
 
-    var authorizer = cedar.Authorizer.init();
-    const result = authorizer.isAuthorized(.{
+    const result = cedar.Authorizer.init().isAuthorized(.{
         .principal = cedar.EntityUID.init("PhotoApp::User", "alice"),
         .action = cedar.EntityUID.init("PhotoApp::Action", "viewPhoto"),
         .resource = cedar.EntityUID.init("PhotoApp::Photo", "vacationPhoto.jpg"),
-        .context = .{},
     }, policySet, .{});
 
     std.debug.print("authorization result {any}\n", .{result});
