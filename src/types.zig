@@ -1,5 +1,6 @@
 const std = @import("std");
 
+/// identifies an entity within the system
 pub const EntityUID = struct {
     ty: []const u8,
     id: []const u8,
@@ -42,6 +43,7 @@ pub const Ref = union(enum) {
     }
 };
 
+/// a scope of access: to whom, for what action and what resource
 pub const Scope = struct {
     principal: Principal,
     action: Action,
@@ -56,6 +58,7 @@ pub const Scope = struct {
     }
 };
 
+/// the "who" component of a scope
 pub const Principal = union(enum) {
     any: void,
     in: Ref,
@@ -90,6 +93,7 @@ pub const Principal = union(enum) {
     }
 };
 
+/// defines what a principal may or may not do
 pub const Action = union(enum) {
     any: void,
     in: Ref,
@@ -124,6 +128,7 @@ pub const Action = union(enum) {
     }
 };
 
+/// defines the subject an action is to be taken
 pub const Resource = union(enum) {
     any: void,
     in: Ref,
@@ -254,6 +259,7 @@ pub const Expr = union(enum) {
     }
 };
 
+/// the core building block of permiting or denying access to perform an action against a given resource
 pub const Policy = struct {
     annotations: []const Annotation,
     effect: Effect,
@@ -275,6 +281,7 @@ pub const Policy = struct {
     }
 };
 
+/// a collection of policies defined by a template
 pub const PolicySet = struct {
     arena: *std.heap.ArenaAllocator,
     policies: []const Policy,
@@ -283,4 +290,27 @@ pub const PolicySet = struct {
         self.arena.deinit();
         alloc.destroy(self.arena);
     }
+};
+
+pub const Entity = struct {
+    uuid: EntityUID,
+    //attrs:  std.StringHashMap(PartialValueSerializedAsExpr),
+    ancestors: std.ArrayList(EntityUID),
+};
+
+pub const Entities = struct {
+    pub const Mode = enum { concrete, partial };
+
+    // todo
+    //allocator: std.mem.Allocator,
+    //entities: std.AutoHashMap(EntityUID, Entity),
+    mode: Mode = .concrete,
+};
+
+pub const Schema = struct {
+    // todo
+};
+
+pub const Context = struct {
+    // todo
 };
