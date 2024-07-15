@@ -214,7 +214,7 @@ pub const EntityUID = struct {
         return .{ .type = tp, .id = id };
     }
 
-    /// expect s in the form of `{Type}::"{id}"`
+    /// expect str in the form of `{Type}::"{id}"`
     pub fn fromStr(str: []const u8) !@This() {
         if (std.mem.lastIndexOf(u8, str, "::")) |split| {
             return init(str[0..split], str[split + 2 ..]);

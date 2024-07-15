@@ -840,5 +840,13 @@ test parse {
         ,
     );
     defer policySet.deinit();
-    for (policySet.policies) |p| std.debug.print("{s}\n", .{p});
+    for (policySet.policies) |p| {
+        // simplify assertion by comparing re-serialized form
+        const ps = try std.fmt.allocPrint(allocator, "{s}", .{p});
+        defer allocator.free(ps);
+        try std.testing.expectEqualStrings(
+            \\@annot("value")
+            \\permit(principal in <slot>,action,resource in asdf::"1234");
+        , ps);
+    }
 }
