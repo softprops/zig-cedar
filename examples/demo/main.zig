@@ -35,5 +35,9 @@ pub fn main() !void {
         .resource = cedar.EntityUID.init("PhotoApp::Photo", "vacationPhoto.jpg"),
     }, policySet, .{});
 
-    std.debug.print("authorization result {any}\n", .{result});
+    // 👇 do something with the authorization decision. the default is deny unless permitted
+    switch (result.decision) {
+        .allow => std.debug.print("yes alice can view vacationPhoto.jpg", .{}),
+        .deny => std.debug.print("no alice can't view vacationPhoto.jpg", .{}),
+    }
 }
