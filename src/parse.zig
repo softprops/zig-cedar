@@ -44,6 +44,11 @@ const Token = struct {
 
         // relop
         eq,
+        lt,
+        gt,
+        lte,
+        gte,
+        neq,
 
         ident,
         string,
@@ -143,7 +148,12 @@ const BUILTINS = [_]Builtin{
     .{ .name = "in", .kind = .in },
     .{ .name = "::", .kind = .path_separator },
     .{ .name = "==", .kind = .eq },
+    .{ .name = "!=", .kind = .neq },
+    .{ .name = "<=", .kind = .lte },
+    .{ .name = ">=", .kind = .gte },
     .{ .name = "@", .kind = .at },
+    .{ .name = ">", .kind = .gt },
+    .{ .name = "<", .kind = .lt },
     .{ .name = "[", .kind = .list_open },
     .{ .name = "]", .kind = .list_close },
     .{ .name = "(", .kind = .left_paren },
