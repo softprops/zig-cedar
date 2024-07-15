@@ -204,7 +204,8 @@ test CedarType {
     );
 }
 
-/// identifies an entity within the system
+/// Identifies an namespaced entity within the system
+/// of the form `{Type}::"{id}"`
 pub const EntityUID = struct {
     type: []const u8,
     id: []const u8,
@@ -222,6 +223,7 @@ pub const EntityUID = struct {
     }
 };
 
+/// Either a EntityUId or a slot to fill in
 pub const Ref = union(enum) {
     id: EntityUID,
     slot: void,
@@ -247,7 +249,7 @@ pub const Ref = union(enum) {
     }
 };
 
-/// a scope of access: to whom, for what action and what resource
+/// A scope of access: to whom, for what action and what resource
 pub const Scope = struct {
     principal: Principal,
     action: Action,
@@ -616,8 +618,6 @@ const EntityJson = struct {
 };
 
 test EntityJson {
-    //if (true) return error.SkipZigTest;
-
     const allocator = std.testing.allocator;
     var parsed = try std.json.parseFromSlice([]const EntityJson, allocator,
         \\[
