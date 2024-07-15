@@ -3,7 +3,7 @@
 \-softprops 2024
 
 <h1 align="center">
-    zig cedar
+    🌲 zig cedar
 </h1>
 
 <div align="center">
@@ -40,7 +40,7 @@ otherwise, to manually add it, do so as follows
     .version = "0.1.0",
     .dependencies = .{
 +       // 👇 declare dep properties
-+        .bson = .{
++        .cedar = .{
 +            // 👇 uri to download
 +            .url = "https://github.com/softprops/zig-cedar/archive/refs/tags/v0.1.3.tar.gz",
 +            // 👇 hash verification
@@ -62,10 +62,10 @@ pub fn build(b: *std.Build) void {
 
     const optimize = b.standardOptimizeOption(.{});
     // 👇 de-reference dep from build.zig.zon
-+    const bson = b.dependency("bson", .{
++    const cedar = b.dependency("cedar", .{
 +        .target = target,
 +        .optimize = optimize,
-+    }).module("bson");
++    }).module("cedar");
     var exe = b.addExecutable(.{
         .name = "your-exe",
         .root_source_file = .{ .path = "src/main.zig" },
@@ -73,7 +73,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     // 👇 add the module to executable
-+    exe.root_mode.addImport("bson", bson);
++    exe.root_mode.addImport("cedar", cedar);
 
     b.installArtifact(exe);
 }
@@ -86,6 +86,6 @@ Does this look interesting but you're new to zig and feel left out? No problem, 
 - [the official zig website](https://ziglang.org/)
 - [zig's one-page language documentation](https://ziglang.org/documentation/0.13.0/)
 - [ziglearn](https://ziglearn.org/)
-- [ziglings exercises](https://github.com/ratfactor/ziglings)
+- [ziglings exercises](https://codeberg.org/ziglings/exercises/)
 
 \- softprops 2024
