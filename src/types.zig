@@ -84,6 +84,65 @@ pub const CedarType = union(enum) {
     pub fn set(elems: []const CedarType) @This() {
         return .{ .set = elems };
     }
+
+    pub fn format(
+        self: @This(),
+        comptime fmt: []const u8,
+        opts: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        switch (self) {
+            .boolean => |v| try writer.print("{s}", .{v}),
+            .string => |v| try writer.print("\"{s}\"", .{v}),
+            .long => |v| try writer.print("{s}", .{v}),
+            .set => |v| {
+                try writer.print("[", .{});
+                for (v, 0..) |elem, i| {
+                    try writer.print("{s}", .{elem});
+                    if (i != v.len - 1) try writer.print(",", .{});
+                }
+                try writer.print("]", .{});
+            },
+            .record => |v| {
+                try writer.print("{", .{});
+                for (v, 0..) |elem, i| {
+                    try writer.print("\"{s}\":", .{elem.@"0"});
+                    elem.@"0".format(fmt, opts, writer);
+                    if (i != v.len - 1) try writer.print(",", .{});
+                }
+                try writer.print("}", .{});
+            },
+            .entity => |v| try writer.print("{s}", .{v}),
+            //.extension => |v| ,
+        }
+    }
+
+    fn fromJsonValue(allocator: std.mem.Allocator, value: std.json.Value) !@This() {
+        return switch (value) {
+            .bool => |v| CedarType.boolean(v),
+            .integer => |v| CedarType.long(@intCast(v)),
+            .float => |v| CedarType.decimal(v),
+            .string => |v| CedarType.string(v),
+            .array => |v| blk: {
+                var elems = std.ArrayList(CedarType).init(allocator);
+                defer elems.deinit();
+                for (v.items) |elem| {
+                    try elems.append(try fromJsonValue(allocator, elem));
+                }
+                break :blk CedarType.set(try elems.toOwnedSlice());
+            },
+            .object => |v| blk: {
+                var attrs = std.ArrayList(CedarType.Attribute).init(allocator);
+                defer attrs.deinit();
+                var it = v.iterator();
+                while (it.next()) |entry| {
+                    try attrs.append(.{ entry.key_ptr.*, try fromJsonValue(allocator, entry.value_ptr.*) });
+                }
+                break :blk CedarType.record(try attrs.toOwnedSlice());
+            },
+            else => @panic("unsupported json type " ++ @typeName(@TypeOf(value))),
+        };
+    }
 };
 
 test CedarType {
@@ -432,6 +491,7 @@ pub const Entity = struct {
     ancestors: std.ArrayList(EntityUID),
 };
 
+/// https://docs.cedarpolicy.com/auth/entities-syntax.html
 pub const Entities = struct {
     pub const Mode = enum { concrete, partial };
 
@@ -441,32 +501,112 @@ pub const Entities = struct {
     mode: Mode = .concrete,
 };
 
-pub const EntityJsonUID = union(enum) {
-    id: EntityUID,
-    entity: struct {
-        __entity: EntityUID,
-    },
-
-    // fn normalize(self: @This()) EntityUID {
-    //     return switch (self) {
-    //         .id => |v| v,
-    //         .entity => |v| v.__entity,
-    //     };
-    // }
-
-    // fn jsonParse(self: @This(), allocator: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) std.json.ParseError(@TypeOf(source.*))!@This() {}
-};
-
 const EntityJson = struct {
+    pub const EntityJsonExt = struct {
+        @"fn": []const u8,
+        arg: []const u8,
+
+        pub fn format(
+            self: @This(),
+            comptime _: []const u8,
+            _: std.fmt.FormatOptions,
+            writer: anytype,
+        ) !void {
+            try writer.print("{s}(\"{s}\")", .{ self.@"fn", self.arg });
+        }
+
+        fn fromJsonValue(value: std.json.Value) @This() {
+            return .{
+                .@"fn" = value.object.get("fn").?.string,
+                .arg = value.object.get("arg").?.string,
+            };
+        }
+    };
+
+    pub const EntityJsonUID = union(enum) {
+        const Explicit = struct {
+            __entity: EntityUID,
+        };
+        /// implicit form of entity uids
+        implicit: EntityUID,
+        /// explicit form of entity uids
+        explicit: Explicit,
+
+        fn normalize(self: @This()) EntityUID {
+            return switch (self) {
+                .implicit => |v| v,
+                .explicit => |v| v.__entity,
+            };
+        }
+
+        pub fn format(
+            self: @This(),
+            comptime _: []const u8,
+            _: std.fmt.FormatOptions,
+            writer: anytype,
+        ) !void {
+            try writer.print("{s}", .{self.normalize()});
+        }
+
+        // provided to enable json parsing to correct deserialize union members
+        pub fn jsonParse(allocator: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) std.json.ParseError(@TypeOf(source.*))!@This() {
+            return fromJsonValue(try std.json.innerParse(std.json.Value, allocator, source, options));
+        }
+
+        fn fromJsonValue(value: std.json.Value) @This() {
+            if (value.object.contains("__entity")) {
+                const exp = value.object.get("__entity").?.object;
+                return .{ .explicit = .{ .__entity = EntityUID.init(exp.get("type").?.string, exp.get("id").?.string) } };
+            } else {
+                return .{ .implicit = EntityUID.init(value.object.get("type").?.string, value.object.get("id").?.string) };
+            }
+        }
+    };
+
+    const EntityJsonValue = union(enum) {
+        cedar: CedarType,
+        __extn: EntityJsonExt,
+        __entity: EntityJsonUID,
+
+        pub fn format(
+            self: @This(),
+            comptime fmt: []const u8,
+            opts: std.fmt.FormatOptions,
+            writer: anytype,
+        ) !void {
+            switch (self) {
+                .cedar => |v| v.format(fmt, opts, writer),
+                .__extn => |v| v.format(fmt, opts, writer),
+                .__entity => |v| v.format(fmt, opts, writer),
+            }
+        }
+
+        pub fn jsonParse(allocator: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) std.json.ParseError(@TypeOf(source.*))!@This() {
+            const raw = try std.json.innerParse(std.json.Value, allocator, source, options);
+            return switch (raw) {
+                .object => |o| blk: {
+                    if (o.contains("__extn")) {
+                        break :blk .{ .__extn = EntityJsonExt.fromJsonValue(o.get("__extn").?) };
+                    }
+                    // explicit and implicit ids are supported
+                    if (o.contains("__entity") or (o.contains("type") and o.contains("id"))) {
+                        break :blk .{ .__entity = EntityJsonUID.fromJsonValue(raw) };
+                    }
+                    break :blk .{ .cedar = try CedarType.fromJsonValue(allocator, raw) };
+                },
+                else => .{ .cedar = try CedarType.fromJsonValue(allocator, raw) },
+            };
+        }
+    };
+
     uid: EntityJsonUID,
-    //parents: []const ??
-    //attrs:
+    parents: []const EntityJsonUID,
+    attrs: std.json.ArrayHashMap(EntityJsonValue),
 };
 
-test "parse EntityJson" {
-    if (true) {
-        return error.SkipZigTest;
-    }
+test EntityJson {
+    //if (true) return error.SkipZigTest;
+
     const allocator = std.testing.allocator;
     var parsed = try std.json.parseFromSlice([]const EntityJson, allocator,
         \\[
@@ -498,7 +638,18 @@ test "parse EntityJson" {
         .allocate = .alloc_always,
     });
     defer parsed.deinit();
-    std.debug.print("EntityJson {any}\n", .{parsed.value});
+    for (parsed.value, 0..) |entity, i| {
+        if (i == 0) {
+            try std.testing.expectEqualStrings("alice", entity.uid.normalize().id);
+            try std.testing.expectEqual(4, entity.attrs.map.count());
+            try std.testing.expectEqual(2, entity.parents.len);
+        }
+        if (i == 1) {
+            try std.testing.expectEqualStrings("ahmad", entity.uid.normalize().id);
+            try std.testing.expectEqual(3, entity.attrs.map.count());
+            try std.testing.expectEqual(0, entity.parents.len);
+        }
+    }
 }
 
 pub const Schema = struct {
