@@ -14,6 +14,8 @@ pub const CedarType = union(enum) {
             return null;
         }
     };
+    /// Extensions are Cedar's way of extending it's typesystem. All Extensions have a name and a means
+    /// of parsing their typed value from a string
     pub fn Extension(comptime T: type, comptime name: []const u8, parseFn: fn ([]const u8) anyerror!T) type {
         return struct {
             name: []const u8,
@@ -26,12 +28,16 @@ pub const CedarType = union(enum) {
             }
         };
     }
+
+    /// A value with both a whole number part and a decimal part of no more than four digits.
     /// https://docs.cedarpolicy.com/policies/syntax-datatypes.html#datatype-decimal
     const Decimal = Extension(f64, "decimal", struct {
         fn parse(s: []const u8) !f64 {
             return try std.fmt.parseFloat(f64, s);
         }
     }.parse);
+
+    /// A value that represents an IP address. It can be either IPv4 or IPv6.
     /// note: only handles ip addresses and not ranges which differs from
     /// https://docs.cedarpolicy.com/policies/syntax-datatypes.html#datatype-ipaddr
     const Ipaddr = Extension(std.net.Address, "ipaddr", struct {
@@ -50,6 +56,7 @@ pub const CedarType = union(enum) {
         ipaddr: Ipaddr,
         decimal: Decimal,
         // register new extensions here
+        /// an unknown extension
         unknown: void,
     },
 
@@ -113,7 +120,11 @@ pub const CedarType = union(enum) {
                 try writer.print("}", .{});
             },
             .entity => |v| try writer.print("{s}", .{v}),
-            //.extension => |v| ,
+            .extension => |v| switch (v) {
+                .ipaddr => |e| try writer.print("{s}(any)", .{ e.name, e.value }),
+                .decimal => |e| try writer.print("{s}({any})", .{ e.name, e.value }),
+                .unknown => try writer.print("<unknown>", .{}),
+            },
         }
     }
 
