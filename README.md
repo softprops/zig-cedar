@@ -1,7 +1,3 @@
-# zig cedar
-
-\-softprops 2024
-
 <h1 align="center">
     🌲 zig cedar
 </h1>
