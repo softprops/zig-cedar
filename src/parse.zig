@@ -375,7 +375,7 @@ fn parsePolicySet(allocator: std.mem.Allocator, tokens: []Token) !types.PolicySe
     var i: usize = 0;
 
     while (i < tokens.len) {
-        const policyRes = try parsePolicy(policySet.arena.allocator(), tokens, i);
+        const policyRes = try parsePolicy(policySet.arena.allocator(), tokens, i, policies.items.len);
         i = policyRes.nextIndex;
         try policies.append(policyRes.policy);
     }
@@ -386,7 +386,7 @@ fn parsePolicySet(allocator: std.mem.Allocator, tokens: []Token) !types.PolicySe
 }
 
 //  Policy ::= {Annotation} Effect '(' Scope ')' {Conditions} ';'
-fn parsePolicy(allocator: std.mem.Allocator, tokens: []Token, index: usize) !struct { nextIndex: usize, policy: types.Policy } {
+fn parsePolicy(allocator: std.mem.Allocator, tokens: []Token, index: usize, policyIndex: usize) !struct { nextIndex: usize, policy: types.Policy } {
     var annotations = std.ArrayList(types.Annotation).init(allocator);
     defer annotations.deinit();
 
@@ -445,6 +445,7 @@ fn parsePolicy(allocator: std.mem.Allocator, tokens: []Token, index: usize) !str
     return .{
         .nextIndex = i,
         .policy = .{
+            .id = try std.fmt.allocPrint(allocator, "policy{d}", .{policyIndex}), // generated policy id based on parsed index
             .annotations = try annotations.toOwnedSlice(),
             .effect = effect,
             .scope = .{

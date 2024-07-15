@@ -488,6 +488,7 @@ pub const Expr = union(enum) {
 
 /// the core building block of permiting or denying access to perform an action against a given resource
 pub const Policy = struct {
+    id: []const u8, // typically derived when parsed as "policy{n}" where n is the index of the policy in parsed document
     annotations: []const Annotation,
     effect: Effect,
     scope: Scope,
