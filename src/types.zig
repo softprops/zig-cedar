@@ -209,8 +209,18 @@ test CedarType {
 pub const EntityUID = struct {
     type: []const u8,
     id: []const u8,
+
     pub fn init(tp: []const u8, id: []const u8) @This() {
         return .{ .type = tp, .id = id };
+    }
+
+    /// expect s in the form of `{Type}::"{id}"`
+    pub fn fromStr(str: []const u8) !@This() {
+        if (std.mem.lastIndexOf(u8, str, "::")) |split| {
+            return init(str[0..split], str[split + 2 ..]);
+        } else {
+            return error.MalformedEntityUID;
+        }
     }
 
     pub fn format(
@@ -222,6 +232,10 @@ pub const EntityUID = struct {
         try writer.print("{s}::\"{s}\"", .{ self.type, self.id });
     }
 };
+
+test "EntityUID.fromStr" {
+    try std.testing.expectEqualDeep(EntityUID.init("Foo", "bar"), try EntityUID.fromStr("Foo::bar"));
+}
 
 /// Either a EntityUId or a slot to fill in
 pub const Ref = union(enum) {
@@ -395,6 +409,7 @@ pub const Expr = union(enum) {
         string: []const u8,
         entity: EntityUID,
     };
+
     pub const Var = enum {
         principal,
         action,
@@ -414,8 +429,10 @@ pub const Expr = union(enum) {
         contains_all,
         contains_any,
     };
+
     literal: Literal,
     variable: Var,
+    pattern: []const u8,
     slot: []const u8,
     ite: struct { @"if": *const Expr, then: *const Expr, @"else": *const Expr },
     @"and": struct { left: *const Expr, right: *const Expr },
@@ -428,6 +445,10 @@ pub const Expr = union(enum) {
 
     pub fn variable(value: Var) @This() {
         return .{ .variable = value };
+    }
+
+    pub fn pattern(value: []const u8) @This() {
+        return .{ .pattern = value };
     }
 
     pub fn slot(value: []const u8) @This() {
