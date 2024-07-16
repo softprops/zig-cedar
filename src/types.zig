@@ -261,6 +261,13 @@ pub const Ref = union(enum) {
             .slot => try writer.print("<slot>", .{}),
         }
     }
+
+    fn toExpr(self: @This(), slotId: SlotId) Expr {
+        return switch (self) {
+            .id => |v| Expr.value(Expr.Literal.entity(v)),
+            .slot => Expr.slot(slotId),
+        };
+    }
 };
 
 /// A scope of access: to whom, for what action and what resource
@@ -268,6 +275,7 @@ pub const Scope = struct {
     principal: Principal,
     action: Action,
     resource: Resource,
+
     pub fn format(
         self: @This(),
         comptime _: []const u8,
@@ -276,6 +284,13 @@ pub const Scope = struct {
     ) !void {
         try writer.print("({s},{s},{s})", .{ self.principal, self.action, self.resource });
     }
+
+    // fn condition(self: @This()) Expr {
+    //     return Expr.@"and"(
+    //         Expr.@"and"(l: Expr, r: Expr),
+
+    //     );
+    // }
 };
 
 /// the "who" component of a scope
@@ -284,7 +299,7 @@ pub const Principal = union(enum) {
     in: Ref,
     eq: Ref,
     is: []const u8,
-    //isIn: todo: impl me
+    //isIn: todo: impl me, note this is essentially a combination of is and in as one contraint
 
     pub fn any() @This() {
         return .{ .any = {} };
@@ -309,6 +324,15 @@ pub const Principal = union(enum) {
             .in => |v| try writer.print("principal in {s}", .{v}),
             .eq => |v| try writer.print("principal == {s}", .{v}),
             .is => |v| try writer.print("principal is {s}", .{v}),
+        }
+    }
+
+    pub fn toExpr(self: @This()) Expr {
+        switch (self) {
+            .any => Expr.literal(Expr.Literal.boolean(true)),
+            .in => |v| Expr.in(Expr.variable(.principal), v.toExpr(.principal)),
+            .eq => |v| Expr.eq(Expr.variable(.principal), v.toExpr(.principal)),
+            .is => |v| Expr.isEntityType(Expr.variable(.principal), v),
         }
     }
 };
@@ -346,6 +370,15 @@ pub const Action = union(enum) {
             .is => |v| try writer.print("action is {s}", .{v}),
         }
     }
+
+    // pub fn toExpr(self: @This()) Expr {
+    //     switch (self) {
+    //         .any => Expr.literal(Expr.Literal.boolean(true)),
+    //         .in => |v| Expr.in(Expr.variable(.principal), v.toExpr(.principal)),
+    //         .eq => |v| Expr.eq(Expr.variable(.principal), v.toExpr(.principal)),
+    //         //.is => |v| Expr.isEntityType(Expr.variable(.principal), v),
+    //     }
+    // }
 };
 
 /// defines the subject an action is to be taken
@@ -381,13 +414,28 @@ pub const Resource = union(enum) {
             .is => |v| try writer.print("resource is {s}", .{v}),
         }
     }
+
+    pub fn toExpr(self: @This()) Expr {
+        switch (self) {
+            .any => Expr.literal(Expr.Literal.boolean(true)),
+            .in => |v| Expr.in(Expr.variable(.action), v.toExpr(.action)),
+            .eq => |v| Expr.eq(Expr.variable(.action), v.toExpr(.action)),
+            .is => |v| Expr.isEntityType(Expr.variable(.principal), v),
+        }
+    }
 };
 
 pub const Effect = enum { forbid, permit };
 
+pub const SlotId = enum {
+    principal,
+    resource,
+};
+
 pub const Annotation = struct {
     name: []const u8,
     value: []const u8,
+
     pub fn init(name: []const u8, value: []const u8) @This() {
         return .{ .name = name, .value = value };
     }
@@ -408,6 +456,22 @@ pub const Expr = union(enum) {
         long: u32,
         string: []const u8,
         entity: EntityUID,
+
+        fn boolean(v: bool) @This() {
+            return .{ .bool = v };
+        }
+
+        fn long(v: u32) @This() {
+            return .{ .long = v };
+        }
+
+        fn string(v: []const u8) @This() {
+            return .{ .string = v };
+        }
+
+        fn entity(v: EntityUID) @This() {
+            return .{ .entity = v };
+        }
     };
 
     pub const Var = enum {
@@ -415,6 +479,11 @@ pub const Expr = union(enum) {
         action,
         resource,
         context,
+    };
+
+    pub const UnaryOp = enum {
+        not,
+        neg,
     };
 
     pub const BinaryOp = enum {
@@ -433,11 +502,19 @@ pub const Expr = union(enum) {
     literal: Literal,
     variable: Var,
     pattern: []const u8,
-    slot: []const u8,
+    slot: SlotId,
     ite: struct { @"if": *const Expr, then: *const Expr, @"else": *const Expr },
     @"and": struct { left: *const Expr, right: *const Expr },
     @"or": struct { left: *const Expr, right: *const Expr },
+    unary: struct { op: UnaryOp, arg: *const Expr },
     binary: struct { op: BinaryOp, arg1: *const Expr, arg2: *const Expr },
+    // todo: ext fn app
+    // todo: get attr
+    // todo: has attr
+    // todo: like
+    is: struct { expr: *const Expr, type: []const u8 }, // should we have a wrapper for EntityTypes?
+    // todo: set
+    // todo: record
 
     pub fn literal(value: Literal) @This() {
         return .{ .literal = value };
@@ -451,7 +528,7 @@ pub const Expr = union(enum) {
         return .{ .pattern = value };
     }
 
-    pub fn slot(value: []const u8) @This() {
+    pub fn slot(value: SlotId) @This() {
         return .{ .slot = value };
     }
 
@@ -470,11 +547,89 @@ pub const Expr = union(enum) {
         };
     }
 
+    // unary ops
+
+    pub fn neg(arg: Expr) @This() {
+        return .{
+            .unary = .{ .op = .neg, .arg = &arg },
+        };
+    }
+
+    pub fn not(arg: Expr) @This() {
+        return .{
+            .unary = .{ .op = .not, .arg = &arg },
+        };
+    }
+
+    // binary ops
+
+    pub fn eq(arg1: Expr, arg2: Expr) @This() {
+        return .{
+            .binary = .{ .op = .eq, .arg1 = &arg1, .arg2 = &arg2 },
+        };
+    }
+
+    pub fn lt(arg1: Expr, arg2: Expr) @This() {
+        return .{
+            .binary = .{ .op = .lt, .arg1 = &arg1, .arg2 = &arg2 },
+        };
+    }
+
+    pub fn lte(arg1: Expr, arg2: Expr) @This() {
+        return .{
+            .binary = .{ .op = .lte, .arg1 = &arg1, .arg2 = &arg2 },
+        };
+    }
+
+    pub fn add(arg1: Expr, arg2: Expr) @This() {
+        return .{
+            .binary = .{ .op = .add, .arg1 = &arg1, .arg2 = &arg2 },
+        };
+    }
+
+    pub fn sub(arg1: Expr, arg2: Expr) @This() {
+        return .{
+            .binary = .{ .op = .sub, .arg1 = &arg1, .arg2 = &arg2 },
+        };
+    }
+
+    pub fn mul(arg1: Expr, arg2: Expr) @This() {
+        return .{
+            .binary = .{ .op = .mul, .arg1 = &arg1, .arg2 = &arg2 },
+        };
+    }
+
     pub fn in(arg1: Expr, arg2: Expr) @This() {
         return .{
             .binary = .{ .op = .in, .arg1 = &arg1, .arg2 = &arg2 },
         };
     }
+
+    pub fn contains(arg1: Expr, arg2: Expr) @This() {
+        return .{
+            .binary = .{ .op = .contains, .arg1 = &arg1, .arg2 = &arg2 },
+        };
+    }
+
+    pub fn containsAll(arg1: Expr, arg2: Expr) @This() {
+        return .{
+            .binary = .{ .op = .contains_all, .arg1 = &arg1, .arg2 = &arg2 },
+        };
+    }
+
+    pub fn containsAny(arg1: Expr, arg2: Expr) @This() {
+        return .{
+            .binary = .{ .op = .contains_any, .arg1 = &arg1, .arg2 = &arg2 },
+        };
+    }
+
+    fn isEntityType(expr: Expr, entityType: []const u8) @This() {
+        return .{
+            .is = .{ .expr = &expr, .type = entityType },
+        };
+    }
+
+    // todo like and others
 
     pub fn format(
         _: @This(),
@@ -507,6 +662,10 @@ pub const Policy = struct {
         if (self.unless) |u| try writer.print(" unless {{ {s} }}", .{u});
         try writer.print(";", .{});
     }
+
+    // fn condition(self: @This()) Expr {
+    //     return self.scope.condition();
+    // }
 };
 
 /// a collection of policies defined by a template
