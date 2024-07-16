@@ -264,11 +264,17 @@ pub const Ref = union(enum) {
 
     fn toExpr(self: @This(), slotId: SlotId) Expr {
         return switch (self) {
-            .id => |v| Expr.value(Expr.Literal.entity(v)),
+            .id => |v| Expr.literal(Expr.Literal.entity(v)),
             .slot => Expr.slot(slotId),
         };
     }
 };
+
+test "Ref.toExpr" {
+    try std.testing.expectEqualDeep(Expr.slot(.principal), Ref.slot().toExpr(.principal));
+    const eid = EntityUID.init("User", "alice");
+    try std.testing.expectEqualDeep(Expr.literal(Expr.Literal.entity(eid)), Ref.id(eid).toExpr(.principal));
+}
 
 /// A scope of access: to whom, for what action and what resource
 pub const Scope = struct {
