@@ -164,7 +164,6 @@ const BUILTINS = [_]Builtin{
     .{ .name = ";", .kind = .semicolon },
 };
 
-/// https://notes.eatonphil.com/zigrocks-sql.html
 fn lex(source: []const u8, tokens: *std.ArrayList(Token)) !void {
     var i: usize = 0;
     while (i < source.len) {
@@ -173,21 +172,21 @@ fn lex(source: []const u8, tokens: *std.ArrayList(Token)) !void {
             break;
         }
 
-        if (lexKeyword(source, i)) |keywordRes| {
-            tokens.append(keywordRes.token) catch return error.OOM;
-            i = keywordRes.nextPosition;
+        if (lexKeyword(source, i)) |res| {
+            i, const token = res;
+            tokens.append(token) catch return error.OOM;
             continue;
         }
 
-        if (lexString(source, i)) |stringRes| {
-            tokens.append(stringRes.token) catch return error.OOM;
-            i = stringRes.nextPosition;
+        if (lexString(source, i)) |res| {
+            i, const token = res;
+            tokens.append(token) catch return error.OOM;
             continue;
         }
 
-        if (lexIdent(source, i)) |identifierRes| {
-            tokens.append(identifierRes.token) catch return error.OOM;
-            i = identifierRes.nextPosition;
+        if (lexIdent(source, i)) |res| {
+            i, const token = res;
+            tokens.append(token) catch return error.OOM;
             continue;
         }
 
@@ -199,7 +198,7 @@ fn lex(source: []const u8, tokens: *std.ArrayList(Token)) !void {
     }
 }
 
-fn lexKeyword(source: []const u8, index: usize) ?struct { nextPosition: usize, token: Token } {
+fn lexKeyword(source: []const u8, index: usize) ?struct { usize, Token } {
     var longestLen: usize = 0;
     var kind: Token.Kind = .permit;
     for (BUILTINS) |builtin| {
@@ -220,8 +219,8 @@ fn lexKeyword(source: []const u8, index: usize) ?struct { nextPosition: usize, t
     }
 
     return .{
-        .nextPosition = index + longestLen,
-        .token = Token{
+        index + longestLen,
+        Token{
             .source = source,
             .start = index,
             .end = index + longestLen,
@@ -230,7 +229,7 @@ fn lexKeyword(source: []const u8, index: usize) ?struct { nextPosition: usize, t
     };
 }
 
-fn lexString(source: []const u8, index: usize) ?struct { nextPosition: usize, token: Token } {
+fn lexString(source: []const u8, index: usize) ?struct { usize, Token } {
     var i = index;
     if (source[i] != '\"') {
         return null;
@@ -253,8 +252,8 @@ fn lexString(source: []const u8, index: usize) ?struct { nextPosition: usize, to
     }
 
     return .{
-        .nextPosition = i,
-        .token = Token{
+        i,
+        Token{
             .source = source,
             .start = start,
             .end = end,
@@ -263,7 +262,7 @@ fn lexString(source: []const u8, index: usize) ?struct { nextPosition: usize, to
     };
 }
 
-fn lexIdent(source: []const u8, index: usize) ?struct { nextPosition: usize, token: Token } {
+fn lexIdent(source: []const u8, index: usize) ?struct { usize, Token } {
     const start = index;
     var end = index;
     var i = index;
@@ -280,8 +279,8 @@ fn lexIdent(source: []const u8, index: usize) ?struct { nextPosition: usize, tok
     }
 
     return .{
-        .nextPosition = end,
-        .token = Token{
+        end,
+        Token{
             .source = source,
             .start = start,
             .end = end,
@@ -290,7 +289,7 @@ fn lexIdent(source: []const u8, index: usize) ?struct { nextPosition: usize, tok
     };
 }
 
-fn lexInt(source: []const u8, index: usize) ?struct { nextPosition: usize, token: ?Token } {
+fn lexInt(source: []const u8, index: usize) ?struct { usize, Token } {
     const start = index;
     var end = index;
     var i = index;
@@ -309,8 +308,8 @@ fn lexInt(source: []const u8, index: usize) ?struct { nextPosition: usize, token
     }
 
     return .{
-        .nextPosition = end,
-        .token = Token{
+        end,
+        Token{
             .source = source,
             .start = start,
             .end = end,
@@ -422,11 +421,11 @@ fn parsePolicy(allocator: std.mem.Allocator, tokens: []Token, index: usize, poli
     var when: ?types.Expr = null;
     var unless: ?types.Expr = null;
     while (try parseCondition(allocator, tokens, i)) |cond| {
-        i = cond.nextIndex;
-        if (cond.when) {
-            when = cond.expr;
+        i, const isWhen, const expr = cond;
+        if (isWhen) {
+            when = expr;
         } else {
-            unless = cond.expr;
+            unless = expr;
         }
     }
 
@@ -536,9 +535,9 @@ fn parseAction(allocator: std.mem.Allocator, tokens: []Token, index: usize) !str
         // '[' EntList ']'
         if (matches(tokens, i, .list_open)) {
             i = i + 1;
-            if (try parseEntityList(allocator, tokens, i)) |list| {
-                i = list.nextIndex;
-                // _ = list; // autofix
+            if (try parseEntityList(allocator, tokens, i)) |listRes| {
+                i, _ = listRes;
+                // todo: capture list
             }
             try expectMatch(tokens, i, .list_close, error.ExpectedListClose);
             i = i + 1;
@@ -665,7 +664,7 @@ fn parseAnnotation(tokens: []Token, index: usize) !?struct { usize, types.Annota
 }
 
 // Condition ::= ('when' | 'unless') '{' Expr '}'
-fn parseCondition(allocator: std.mem.Allocator, tokens: []Token, index: usize) !?struct { nextIndex: usize, when: bool, expr: types.Expr } {
+fn parseCondition(allocator: std.mem.Allocator, tokens: []Token, index: usize) !?struct { usize, bool, types.Expr } {
     var i = index;
 
     const when = matches(tokens, index, .when);
@@ -675,57 +674,45 @@ fn parseCondition(allocator: std.mem.Allocator, tokens: []Token, index: usize) !
         try expectMatch(tokens, i, .left_brace, error.ExpectedLeftBrace);
         i = i + 1;
 
-        const exprRes = (try parseExpr(allocator, tokens, i)) orelse {
+        i, const expr = (try parseExpr(allocator, tokens, i)) orelse {
             return error.ExpectedExpr;
         };
-        i = exprRes.nextIndex;
-        const expr = exprRes.expr;
 
         try expectMatch(tokens, i, .right_brace, error.ExpectedRightBrace);
         i = i + 1;
 
-        return .{
-            .nextIndex = i,
-            .when = when,
-            .expr = expr,
-        };
+        return .{ i, when, expr };
     }
     return null;
 }
 
 // Expr ::= Or | 'if' Expr 'then' Expr 'else' Expr
-fn parseExpr(allocator: std.mem.Allocator, tokens: []Token, index: usize) !?struct { nextIndex: usize, expr: types.Expr } {
+fn parseExpr(allocator: std.mem.Allocator, tokens: []Token, index: usize) !?struct { usize, types.Expr } {
     var i = index;
     // 'if' Expr 'then' Expr 'else' Expr
     if (matches(tokens, index, .@"if")) {
         i = i + 1;
 
-        const expr1Res = (try parseExpr(allocator, tokens, i)) orelse {
+        i, const expr1 = (try parseExpr(allocator, tokens, i)) orelse {
             return error.ExpectedExpr;
         };
-        i = expr1Res.nextIndex;
-        const expr1 = expr1Res.expr;
 
         try expectMatch(tokens, i, .then, error.ExpectedThen);
         i = i + 1;
 
-        const expr2Res = (try parseExpr(allocator, tokens, i)) orelse {
+        i, const expr2 = (try parseExpr(allocator, tokens, i)) orelse {
             return error.ExpectedExpr;
         };
-        i = expr2Res.nextIndex;
-        const expr2 = expr2Res.expr;
 
         try expectMatch(tokens, i, .@"else", error.ExpectedElse);
 
-        const expr3Res = (try parseExpr(allocator, tokens, i)) orelse {
+        i, const expr3 = (try parseExpr(allocator, tokens, i)) orelse {
             return error.ExpectedExpr;
         };
-        i = expr3Res.nextIndex;
-        const expr3 = expr3Res.expr;
 
         return .{
-            .nextIndex = i,
-            .expr = types.Expr.ite(expr1, expr2, expr3),
+            i,
+            types.Expr.ite(expr1, expr2, expr3),
         };
     } else {
         // ...
@@ -762,8 +749,8 @@ fn parseExpr(allocator: std.mem.Allocator, tokens: []Token, index: usize) !?stru
         i, const arg2Entity = (try parseEntity(allocator, tokens, i)).?;
         const arg2 = types.Expr.literal(.{ .entity = arg2Entity });
         return .{
-            .nextIndex = i,
-            .expr = types.Expr.in(arg1, arg2),
+            i,
+            types.Expr.in(arg1, arg2),
         };
     }
     return null;
@@ -775,8 +762,8 @@ fn parseEntityList(
     tokens: []Token,
     index: usize,
 ) !?struct {
-    nextIndex: usize,
-    entities: []const types.EntityUID,
+    usize,
+    []const types.EntityUID,
 } {
     var i: usize = index;
     var list = std.ArrayList(types.EntityUID).init(allocator);
@@ -790,7 +777,7 @@ fn parseEntityList(
         i = i + 1;
     }
     if (list.items.len > 0) {
-        return .{ .nextIndex = i, .entities = try list.toOwnedSlice() };
+        return .{ i, try list.toOwnedSlice() };
     }
     return null;
 }
