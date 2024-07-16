@@ -291,12 +291,15 @@ pub const Scope = struct {
         try writer.print("({s},{s},{s})", .{ self.principal, self.action, self.resource });
     }
 
-    // fn condition(self: @This()) Expr {
-    //     return Expr.@"and"(
-    //         Expr.@"and"(l: Expr, r: Expr),
-
-    //     );
-    // }
+    fn condition(self: @This()) Expr {
+        return Expr.@"and"(
+            Expr.@"and"(
+                self.principal.toExpr(),
+                self.action.toExpr(),
+            ),
+            self.resource.toExpr(),
+        );
+    }
 };
 
 /// the "who" component of a scope
@@ -346,10 +349,8 @@ pub const Principal = union(enum) {
 /// defines what a principal may or may not do
 pub const Action = union(enum) {
     any: void,
-    in: Ref,
+    in: Ref, // todo: extend to also represent a list of refs
     eq: Ref,
-    is: []const u8,
-    //isIn: //isIn: todo: impl me
 
     pub fn any() @This() {
         return .{ .any = {} };
@@ -373,18 +374,16 @@ pub const Action = union(enum) {
             .any => try writer.print("action", .{}),
             .in => |v| try writer.print("action in {s}", .{v}),
             .eq => |v| try writer.print("action == {s}", .{v}),
-            .is => |v| try writer.print("action is {s}", .{v}),
         }
     }
 
-    // pub fn toExpr(self: @This()) Expr {
-    //     switch (self) {
-    //         .any => Expr.literal(Expr.Literal.boolean(true)),
-    //         .in => |v| Expr.in(Expr.variable(.principal), v.toExpr(.principal)),
-    //         .eq => |v| Expr.eq(Expr.variable(.principal), v.toExpr(.principal)),
-    //         //.is => |v| Expr.isEntityType(Expr.variable(.principal), v),
-    //     }
-    // }
+    pub fn toExpr(self: @This()) Expr {
+        switch (self) {
+            .any => Expr.literal(Expr.Literal.boolean(true)),
+            .in => |v| Expr.in(Expr.variable(.action), v.toExpr(.principal)), // note: actions will never have slots
+            .eq => |v| Expr.eq(Expr.variable(.action), v.toExpr(.principal)), // note: actions will never have slots
+        }
+    }
 };
 
 /// defines the subject an action is to be taken
@@ -669,9 +668,10 @@ pub const Policy = struct {
         try writer.print(";", .{});
     }
 
-    // fn condition(self: @This()) Expr {
-    //     return self.scope.condition();
-    // }
+    fn condition(self: @This()) Expr {
+        // todo: include unless/when contexts where available
+        return self.scope.condition();
+    }
 };
 
 /// a collection of policies defined by a template
