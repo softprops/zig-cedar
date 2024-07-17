@@ -14,6 +14,8 @@ pub const CedarType = union(enum) {
             return null;
         }
     };
+    pub const Set = struct { elems: []const CedarType };
+
     /// Extensions are Cedar's way of extending it's typesystem. All Extensions have a name and a means
     /// of parsing their typed value from a string
     pub fn Extension(comptime T: type, comptime name: []const u8, parseFn: fn ([]const u8) anyerror!T) type {
@@ -49,7 +51,7 @@ pub const CedarType = union(enum) {
     boolean: bool,
     string: []const u8,
     long: u64,
-    set: []const CedarType,
+    set: Set,
     record: Record,
     entity: EntityUID,
     extension: union(enum) {
@@ -89,39 +91,39 @@ pub const CedarType = union(enum) {
     }
 
     pub fn set(elems: []const CedarType) @This() {
-        return .{ .set = elems };
+        return .{ .set = .{ .elems = elems } };
     }
 
     pub fn format(
         self: @This(),
-        comptime fmt: []const u8,
-        opts: std.fmt.FormatOptions,
+        comptime _: []const u8,
+        _: std.fmt.FormatOptions,
         writer: anytype,
     ) !void {
         switch (self) {
-            .boolean => |v| try writer.print("{s}", .{v}),
+            .boolean => |v| try writer.print("{any}", .{v}),
             .string => |v| try writer.print("\"{s}\"", .{v}),
-            .long => |v| try writer.print("{s}", .{v}),
+            .long => |v| try writer.print("{d}", .{v}),
             .set => |v| {
                 try writer.print("[", .{});
-                for (v, 0..) |elem, i| {
+                for (v.elems, 0..) |elem, i| {
                     try writer.print("{s}", .{elem});
-                    if (i != v.len - 1) try writer.print(",", .{});
+                    if (i != v.elems.len - 1) try writer.print(",", .{});
                 }
                 try writer.print("]", .{});
             },
             .record => |v| {
-                try writer.print("{", .{});
-                for (v, 0..) |elem, i| {
-                    try writer.print("\"{s}\":", .{elem.@"0"});
-                    elem.@"0".format(fmt, opts, writer);
-                    if (i != v.len - 1) try writer.print(",", .{});
+                try writer.print("{{", .{});
+                for (v.attributes, 0..) |attr, i| {
+                    try writer.print("\"{s}\":{s}", .{ attr.@"0", attr.@"1" });
+                    //                    attr.@"0".format(fmt, opts, writer);
+                    if (i != v.attributes.len - 1) try writer.print(",", .{});
                 }
-                try writer.print("}", .{});
+                try writer.print("}}", .{});
             },
             .entity => |v| try writer.print("{s}", .{v}),
             .extension => |v| switch (v) {
-                .ipaddr => |e| try writer.print("{s}(any)", .{ e.name, e.value }),
+                .ipaddr => |e| try writer.print("{s}({any})", .{ e.name, e.value }),
                 .decimal => |e| try writer.print("{s}({any})", .{ e.name, e.value }),
                 .unknown => try writer.print("<unknown>", .{}),
             },
@@ -183,7 +185,7 @@ test CedarType {
             CedarType.boolean(false),
             CedarType.string("str"),
         },
-    ).set.len, 3);
+    ).set.elems.len, 3);
     // decimal ext
     try std.testing.expectEqual(
         CedarType.decimal(1.0).extension.decimal.value,
@@ -292,13 +294,14 @@ pub const Scope = struct {
     }
 
     fn condition(self: @This()) Expr {
-        return Expr.@"and"(
-            Expr.@"and"(
-                self.principal.toExpr(),
-                self.action.toExpr(),
-            ),
-            self.resource.toExpr(),
-        );
+        return self.principal.toExpr();
+        // return Expr.@"and"(
+        //     Expr.@"and"(
+        //         self.principal.toExpr(),
+        //         self.action.toExpr(),
+        //     ),
+        //     self.resource.toExpr(),
+        // );
     }
 };
 
@@ -319,7 +322,7 @@ pub const Principal = union(enum) {
     }
 
     pub fn eq(ref: Ref) @This() {
-        return .{ .in = ref };
+        return .{ .eq = ref };
     }
 
     pub fn format(
@@ -337,12 +340,12 @@ pub const Principal = union(enum) {
     }
 
     pub fn toExpr(self: @This()) Expr {
-        switch (self) {
+        return switch (self) {
             .any => Expr.literal(Expr.Literal.boolean(true)),
             .in => |v| Expr.in(Expr.variable(.principal), v.toExpr(.principal)),
             .eq => |v| Expr.eq(Expr.variable(.principal), v.toExpr(.principal)),
             .is => |v| Expr.isEntityType(Expr.variable(.principal), v),
-        }
+        };
     }
 };
 
@@ -361,7 +364,7 @@ pub const Action = union(enum) {
     }
 
     pub fn eq(ref: Ref) @This() {
-        return .{ .in = ref };
+        return .{ .eq = ref };
     }
 
     pub fn format(
@@ -378,11 +381,11 @@ pub const Action = union(enum) {
     }
 
     pub fn toExpr(self: @This()) Expr {
-        switch (self) {
+        return switch (self) {
             .any => Expr.literal(Expr.Literal.boolean(true)),
             .in => |v| Expr.in(Expr.variable(.action), v.toExpr(.principal)), // note: actions will never have slots
             .eq => |v| Expr.eq(Expr.variable(.action), v.toExpr(.principal)), // note: actions will never have slots
-        }
+        };
     }
 };
 
@@ -403,7 +406,7 @@ pub const Resource = union(enum) {
     }
 
     pub fn eq(ref: Ref) @This() {
-        return .{ .in = ref };
+        return .{ .eq = ref };
     }
 
     pub fn format(
@@ -421,12 +424,12 @@ pub const Resource = union(enum) {
     }
 
     pub fn toExpr(self: @This()) Expr {
-        switch (self) {
+        return switch (self) {
             .any => Expr.literal(Expr.Literal.boolean(true)),
-            .in => |v| Expr.in(Expr.variable(.action), v.toExpr(.action)),
-            .eq => |v| Expr.eq(Expr.variable(.action), v.toExpr(.action)),
-            .is => |v| Expr.isEntityType(Expr.variable(.principal), v),
-        }
+            .in => |v| Expr.in(Expr.variable(.resource), v.toExpr(.resource)),
+            .eq => |v| Expr.eq(Expr.variable(.resource), v.toExpr(.resource)),
+            .is => |v| Expr.isEntityType(Expr.variable(.resource), v),
+        };
     }
 };
 
@@ -462,7 +465,7 @@ pub const Expr = union(enum) {
         string: []const u8,
         entity: EntityUID,
 
-        fn boolean(v: bool) @This() {
+        pub fn boolean(v: bool) @This() {
             return .{ .bool = v };
         }
 
@@ -474,7 +477,7 @@ pub const Expr = union(enum) {
             return .{ .string = v };
         }
 
-        fn entity(v: EntityUID) @This() {
+        pub fn entity(v: EntityUID) @This() {
             return .{ .entity = v };
         }
     };
@@ -520,6 +523,7 @@ pub const Expr = union(enum) {
     is: struct { expr: *const Expr, type: []const u8 }, // should we have a wrapper for EntityTypes?
     // todo: set
     // todo: record
+    unknown: void, // used for eval purposes, todo add some information
 
     pub fn literal(value: Literal) @This() {
         return .{ .literal = value };
@@ -538,11 +542,11 @@ pub const Expr = union(enum) {
     }
 
     pub fn @"and"(l: Expr, r: Expr) @This() {
-        return .{ .@"and" = .{ .left = l, .right = r } };
+        return .{ .@"and" = .{ .left = &l, .right = &r } };
     }
 
     pub fn @"or"(l: Expr, r: Expr) @This() {
-        return .{ .@"or" = .{ .left = l, .right = r } };
+        return .{ .@"or" = .{ .left = &l, .right = &r } };
     }
 
     /// if .. then .. else ..
@@ -568,18 +572,21 @@ pub const Expr = union(enum) {
 
     // binary ops
 
-    pub fn eq(arg1: Expr, arg2: Expr) @This() {
+    pub fn binary(op: BinaryOp, arg1: Expr, arg2: Expr) @This() {
         return .{
-            .binary = .{ .op = .eq, .arg1 = &arg1, .arg2 = &arg2 },
+            .binary = .{ .op = op, .arg1 = &arg1, .arg2 = &arg2 },
         };
+    }
+
+    pub fn eq(arg1: Expr, arg2: Expr) @This() {
+        return binary(.eq, arg1, arg2);
     }
 
     pub fn lt(arg1: Expr, arg2: Expr) @This() {
-        return .{
-            .binary = .{ .op = .lt, .arg1 = &arg1, .arg2 = &arg2 },
-        };
+        return binary(.lt, arg1, arg2);
     }
 
+    // todo: refactor impls to binary(op, arg1, arg2)
     pub fn lte(arg1: Expr, arg2: Expr) @This() {
         return .{
             .binary = .{ .op = .lte, .arg1 = &arg1, .arg2 = &arg2 },
@@ -635,6 +642,10 @@ pub const Expr = union(enum) {
     }
 
     // todo like and others
+    //
+    pub fn unknown() @This() {
+        return .{ .unknown = {} };
+    }
 
     pub fn format(
         _: @This(),
@@ -654,6 +665,7 @@ pub const Policy = struct {
     scope: Scope,
     when: ?Expr = null,
     unless: ?Expr = null,
+    // env: SlotEnv,
 
     pub fn format(
         self: @This(),
@@ -668,11 +680,13 @@ pub const Policy = struct {
         try writer.print(";", .{});
     }
 
-    fn condition(self: @This()) Expr {
+    pub fn condition(self: @This()) Expr {
         // todo: include unless/when contexts where available
         return self.scope.condition();
     }
 };
+
+pub const SlotEnv = std.AutoHashMap(SlotId, EntityUID);
 
 /// a collection of policies defined by a template
 pub const PolicySet = struct {

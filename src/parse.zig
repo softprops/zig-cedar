@@ -823,7 +823,7 @@ test parse {
         defer allocator.free(ps);
         try std.testing.expectEqualStrings(
             \\@annot("value")
-            \\permit(principal in <slot>,action,resource in asdf::"1234");
+            \\permit(principal == <slot>,action,resource in asdf::"1234");
         , ps);
     }
 }
