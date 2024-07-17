@@ -247,7 +247,6 @@ const Evaluator = struct {
                         .residual => |bb| return PartialValue.residual(Expr.binary(op, aa, bb)),
                     },
                 };
-                //std.debug.print("a {any} b {any}\n", .{ va, vb });
                 switch (v.op) {
                     .eq => {
                         const eq = std.meta.eql(va, vb);
@@ -261,34 +260,34 @@ const Evaluator = struct {
                     .lt, .lte, .add, .sub, .mul => {
                         const la = try va.asLong();
                         const lb = try vb.asLong();
-                        switch (v.op) {
-                            .lt => break :blk PartialValue.value(
+                        break :blk switch (v.op) {
+                            .lt => PartialValue.value(
                                 Value.literal(
                                     Expr.Literal.boolean(la == lb),
                                 ),
                             ),
-                            .lte => break :blk PartialValue.value(
+                            .lte => PartialValue.value(
                                 Value.literal(
                                     Expr.Literal.boolean(la <= lb),
                                 ),
                             ),
-                            .add => break :blk PartialValue.value(
+                            .add => PartialValue.value(
                                 Value.literal(
                                     Expr.Literal.long(try std.math.add(i64, la, lb)),
                                 ),
                             ),
-                            .sub => break :blk PartialValue.value(
+                            .sub => PartialValue.value(
                                 Value.literal(
                                     Expr.Literal.long(try std.math.sub(i64, la, lb)),
                                 ),
                             ),
-                            .mul => break :blk PartialValue.value(
+                            .mul => PartialValue.value(
                                 Value.literal(
                                     Expr.Literal.long(try std.math.mul(i64, la, lb)),
                                 ),
                             ),
                             else => unreachable, // expect cases are covered above
-                        }
+                        };
                     },
                     .in => {},
                     .contains => {},
