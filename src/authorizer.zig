@@ -260,34 +260,16 @@ const Evaluator = struct {
                     .lt, .lte, .add, .sub, .mul => {
                         const la = try va.asLong();
                         const lb = try vb.asLong();
-                        break :blk switch (v.op) {
-                            .lt => PartialValue.value(
-                                Value.literal(
-                                    Expr.Literal.boolean(la == lb),
-                                ),
-                            ),
-                            .lte => PartialValue.value(
-                                Value.literal(
-                                    Expr.Literal.boolean(la <= lb),
-                                ),
-                            ),
-                            .add => PartialValue.value(
-                                Value.literal(
-                                    Expr.Literal.long(try std.math.add(i64, la, lb)),
-                                ),
-                            ),
-                            .sub => PartialValue.value(
-                                Value.literal(
-                                    Expr.Literal.long(try std.math.sub(i64, la, lb)),
-                                ),
-                            ),
-                            .mul => PartialValue.value(
-                                Value.literal(
-                                    Expr.Literal.long(try std.math.mul(i64, la, lb)),
-                                ),
-                            ),
-                            else => unreachable, // expect cases are covered above
-                        };
+                        break :blk PartialValue.value(
+                            Value.literal(switch (v.op) {
+                                .lt => Expr.Literal.boolean(la == lb),
+                                .lte => Expr.Literal.boolean(la <= lb),
+                                .add => Expr.Literal.long(try std.math.add(i64, la, lb)),
+                                .sub => Expr.Literal.long(try std.math.sub(i64, la, lb)),
+                                .mul => Expr.Literal.long(try std.math.mul(i64, la, lb)),
+                                else => unreachable, // expect cases are covered above
+                            }),
+                        );
                     },
                     .in => {},
                     .contains => {},
