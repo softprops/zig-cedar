@@ -206,7 +206,7 @@ test CedarType {
     );
 }
 
-/// Identifies an namespaced entity within the system
+/// Uniquely identifies an namespaced entity within the system
 /// of the form `{Type}::"{id}"`
 pub const EntityUID = struct {
     type: []const u8,
@@ -435,6 +435,7 @@ pub const Resource = union(enum) {
 
 pub const Effect = enum { forbid, permit };
 
+/// name of a variable which may be substituted during evaluation
 pub const SlotId = enum {
     principal,
     resource,
@@ -461,7 +462,7 @@ pub const Annotation = struct {
 pub const Expr = union(enum) {
     pub const Literal = union(enum) {
         bool: bool,
-        long: u32,
+        long: i64,
         string: []const u8,
         entity: EntityUID,
 
@@ -469,7 +470,7 @@ pub const Expr = union(enum) {
             return .{ .bool = v };
         }
 
-        fn long(v: u32) @This() {
+        pub fn long(v: i64) @This() {
             return .{ .long = v };
         }
 
@@ -635,7 +636,7 @@ pub const Expr = union(enum) {
         };
     }
 
-    fn isEntityType(expr: Expr, entityType: []const u8) @This() {
+    pub fn isEntityType(expr: Expr, entityType: []const u8) @This() {
         return .{
             .is = .{ .expr = &expr, .type = entityType },
         };

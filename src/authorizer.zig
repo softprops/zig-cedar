@@ -40,10 +40,36 @@ pub const Value = union(enum) {
         return .{ .record = v };
     }
 
+    /// return bool value if this is a literal bool
+    /// otherwise return an EvalError
     fn asBool(self: @This()) !bool {
         return switch (self) {
             .literal => |l| switch (l) {
-                .bool => |b| b,
+                .bool => |v| v,
+                else => error.EvalError,
+            },
+            else => error.EvalError,
+        };
+    }
+
+    /// return i64 value if this is a literal i64
+    /// otherwise return an EvalError
+    fn asLong(self: @This()) !i64 {
+        return switch (self) {
+            .literal => |l| switch (l) {
+                .long => |v| v,
+                else => error.EvalError,
+            },
+            else => error.EvalError,
+        };
+    }
+
+    /// return EntityUID value if this is a literal EntityUID
+    /// otherwise return an EvalError
+    fn asEntity(self: @This()) !EntityUID {
+        return switch (self) {
+            .literal => |l| switch (l) {
+                .entity => |v| v,
                 else => error.EvalError,
             },
             else => error.EvalError,
@@ -57,8 +83,23 @@ test "Value.asBool" {
     try std.testing.expect(try Value.literal(Expr.Literal.boolean(true)).asBool());
 }
 
+test "Value meta.eq" {
+    for ([_]struct { l: Value, r: Value, expect: bool }{
+        .{ .l = Value.literal(Expr.Literal.entity(EntityUID.init("foo", "bar"))), .r = Value.literal(Expr.Literal.entity(EntityUID.init("foo", "bar"))), .expect = true },
+        .{ .l = Value.literal(Expr.Literal.entity(EntityUID.init("foo", "bar"))), .r = Value.literal(Expr.Literal.entity(EntityUID.init("foo", "baz"))), .expect = false },
+    }) |case| {
+        const eq = std.meta.eql(case.l, case.r);
+        std.testing.expect(if (case.expect) eq else !eq) catch |err| {
+            std.debug.print("expected {any} when comparing {any} and {any}", .{ case.expect, case.l, case.r });
+            return err;
+        };
+    }
+}
+
+/// The primary interface for answering authorization questions
 pub const Authorizer = struct {
     pub const Response = struct {
+        /// outcome of authorization query
         pub const Decision = enum {
             allow,
             deny,
@@ -67,6 +108,7 @@ pub const Authorizer = struct {
         decision: Decision = .deny,
     };
 
+    /// per-request authorization query inputs
     pub const Request = struct {
         principal: EntityUID,
         action: EntityUID,
@@ -79,6 +121,8 @@ pub const Authorizer = struct {
         return .{};
     }
 
+    /// Returns a Response containing information about the outcome of for a given
+    /// authorization request
     pub fn isAuthorized(
         _: @This(),
         request: Request,
@@ -203,22 +247,49 @@ const Evaluator = struct {
                         .residual => |bb| return PartialValue.residual(Expr.binary(op, aa, bb)),
                     },
                 };
-                std.debug.print("a {any} b {any}\n", .{ va, vb });
+                //std.debug.print("a {any} b {any}\n", .{ va, vb });
                 switch (v.op) {
                     .eq => {
                         const eq = std.meta.eql(va, vb);
-                        std.debug.print("are these eq? {any}\n", .{eq});
+                        std.debug.print("are {any} and {any} meta.eq? {any}\n", .{ va, vb, eq });
                         break :blk PartialValue.value(
                             Value.literal(
                                 Expr.Literal.boolean(eq),
                             ),
                         );
                     },
-                    .lt => {},
-                    .lte => {},
-                    .add => {},
-                    .sub => {},
-                    .mul => {},
+                    .lt, .lte, .add, .sub, .mul => {
+                        const la = try va.asLong();
+                        const lb = try vb.asLong();
+                        switch (v.op) {
+                            .lt => break :blk PartialValue.value(
+                                Value.literal(
+                                    Expr.Literal.boolean(la == lb),
+                                ),
+                            ),
+                            .lte => break :blk PartialValue.value(
+                                Value.literal(
+                                    Expr.Literal.boolean(la <= lb),
+                                ),
+                            ),
+                            .add => break :blk PartialValue.value(
+                                Value.literal(
+                                    Expr.Literal.long(try std.math.add(i64, la, lb)),
+                                ),
+                            ),
+                            .sub => break :blk PartialValue.value(
+                                Value.literal(
+                                    Expr.Literal.long(try std.math.sub(i64, la, lb)),
+                                ),
+                            ),
+                            .mul => break :blk PartialValue.value(
+                                Value.literal(
+                                    Expr.Literal.long(try std.math.mul(i64, la, lb)),
+                                ),
+                            ),
+                            else => unreachable, // expect cases are covered above
+                        }
+                    },
                     .in => {},
                     .contains => {},
                     .contains_all => {},
@@ -228,7 +299,16 @@ const Evaluator = struct {
             },
             .is => |v| blk: {
                 std.debug.print("is {any}\n", .{v});
-                break :blk PartialValue.residual(Expr.unknown());
+                break :blk switch (try self.partialInterpret(v.expr.*)) {
+                    .value => |vv| PartialValue.value(
+                        Value.literal(
+                            Expr.Literal.boolean(std.mem.eql(u8, (try vv.asEntity()).type, v.type)),
+                        ),
+                    ),
+                    .residual => |vv| PartialValue.residual(
+                        Expr.isEntityType(vv, v.type),
+                    ),
+                };
             },
             .unknown => PartialValue.residual(expr), // the unknown case
         };
@@ -236,12 +316,3 @@ const Evaluator = struct {
 
     //fn eval_if(self: @This(), i: Expr, t: Expr, e: Expr)
 };
-
-// test "Value meta eq" {
-//     try std.testing.expect(
-//         std.meta.eql(
-//             Value.literal(Expr.Literal.entity(EntityUID.init("foo", "bar"))),
-//             Value.literal(Expr.Literal.entity(EntityUID.init("foo", "bar"))),
-//         ),
-//     );
-// }
