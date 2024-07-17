@@ -90,7 +90,10 @@ test "Value meta.eq" {
     }) |case| {
         const eq = std.meta.eql(case.l, case.r);
         std.testing.expect(if (case.expect) eq else !eq) catch |err| {
-            std.debug.print("expected {any} when comparing {any} and {any}", .{ case.expect, case.l, case.r });
+            std.debug.print(
+                "expected {any} when comparing {any} and {any}",
+                .{ case.expect, case.l, case.r },
+            );
             return err;
         };
     }
