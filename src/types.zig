@@ -6,6 +6,7 @@ pub const CedarType = union(enum) {
     pub const Record = struct {
         attributes: []const Attribute,
         fn get(self: *const @This(), name: []const u8) ?CedarType {
+            // todo: support indexed lookup
             for (self.attributes) |attr| {
                 if (std.mem.eql(u8, name, attr.@"0")) {
                     return attr.@"1";
@@ -294,14 +295,13 @@ pub const Scope = struct {
     }
 
     fn condition(self: @This()) Expr {
-        return self.principal.toExpr();
-        // return Expr.@"and"(
-        //     Expr.@"and"(
-        //         self.principal.toExpr(),
-        //         self.action.toExpr(),
-        //     ),
-        //     self.resource.toExpr(),
-        // );
+        return Expr.@"and"(
+            //  Expr.@"and"(
+            self.principal.toExpr(),
+            //     self.action.toExpr(),
+            // ),
+            self.resource.toExpr(),
+        );
     }
 };
 
@@ -459,6 +459,7 @@ pub const Annotation = struct {
 };
 
 // https://github.com/cedar-policy/cedar/blob/b653e6c0627423b24bed50ee664b0302c512f16a/cedar-policy-core/src/ast/expr.rs#L48
+/// An Expr is union of types describing of a expression yet to be evaluated
 pub const Expr = union(enum) {
     pub const Literal = union(enum) {
         bool: bool,
@@ -482,6 +483,7 @@ pub const Expr = union(enum) {
             return .{ .entity = v };
         }
 
+        /// returns true when both the type and value of a literal value matches with that of `other`
         pub fn eql(self: @This(), other: @This()) bool {
             return switch (self) {
                 .bool => |v| switch (other) {
@@ -610,51 +612,35 @@ pub const Expr = union(enum) {
 
     // todo: refactor impls to binary(op, arg1, arg2)
     pub fn lte(arg1: Expr, arg2: Expr) @This() {
-        return .{
-            .binary = .{ .op = .lte, .arg1 = &arg1, .arg2 = &arg2 },
-        };
+        return binary(.lte, arg1, arg2);
     }
 
     pub fn add(arg1: Expr, arg2: Expr) @This() {
-        return .{
-            .binary = .{ .op = .add, .arg1 = &arg1, .arg2 = &arg2 },
-        };
+        return binary(.add, arg1, arg2);
     }
 
     pub fn sub(arg1: Expr, arg2: Expr) @This() {
-        return .{
-            .binary = .{ .op = .sub, .arg1 = &arg1, .arg2 = &arg2 },
-        };
+        return binary(.sub, arg1, arg2);
     }
 
     pub fn mul(arg1: Expr, arg2: Expr) @This() {
-        return .{
-            .binary = .{ .op = .mul, .arg1 = &arg1, .arg2 = &arg2 },
-        };
+        return binary(.mul, arg1, arg2);
     }
 
     pub fn in(arg1: Expr, arg2: Expr) @This() {
-        return .{
-            .binary = .{ .op = .in, .arg1 = &arg1, .arg2 = &arg2 },
-        };
+        return binary(.in, arg1, arg2);
     }
 
     pub fn contains(arg1: Expr, arg2: Expr) @This() {
-        return .{
-            .binary = .{ .op = .contains, .arg1 = &arg1, .arg2 = &arg2 },
-        };
+        return binary(.contains, arg1, arg2);
     }
 
     pub fn containsAll(arg1: Expr, arg2: Expr) @This() {
-        return .{
-            .binary = .{ .op = .contains_all, .arg1 = &arg1, .arg2 = &arg2 },
-        };
+        return binary(.contains_all, arg1, arg2);
     }
 
     pub fn containsAny(arg1: Expr, arg2: Expr) @This() {
-        return .{
-            .binary = .{ .op = .contains_any, .arg1 = &arg1, .arg2 = &arg2 },
-        };
+        return binary(.contains_any, arg1, arg2);
     }
 
     pub fn isEntityType(expr: Expr, entityType: []const u8) @This() {
@@ -664,18 +650,18 @@ pub const Expr = union(enum) {
     }
 
     // todo like and others
-    //
+
     pub fn unknown() @This() {
         return .{ .unknown = {} };
     }
 
     pub fn format(
-        _: @This(),
+        self: @This(),
         comptime _: []const u8,
         _: std.fmt.FormatOptions,
         writer: anytype,
     ) !void {
-        try writer.print("<expr>", .{});
+        try writer.print("<{s} expr>", .{@tagName(self)});
     }
 };
 
