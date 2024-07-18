@@ -25,6 +25,7 @@ pub fn build(b: *std.Build) !void {
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
+        .filters = if (b.args) |args| args else &.{},
     });
 
     const run_unit_tests = b.addRunArtifact(unit_tests);
