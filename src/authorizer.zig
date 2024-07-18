@@ -75,6 +75,18 @@ pub const Value = union(enum) {
             else => error.EvalError,
         };
     }
+
+    // std.meta.eq is shallow and auto hashing does not support  net.Address
+    // https://github.com/ziglang/zig/issues/19003
+    fn eq(self: @This(), other: @This()) bool {
+        return switch (self) {
+            .literal => |v| switch (other) {
+                .literal => |vv| v.eql(vv),
+                else => false,
+            },
+            else => false,
+        };
+    }
 };
 
 test "Value.asBool" {
@@ -191,7 +203,6 @@ const Evaluator = struct {
 
     fn partialInterpret(self: @This(), expr: Expr) !PartialValue {
         // https://github.com/cedar-policy/cedar/blob/67131d64bb80cfa9cc861e999ede365d1bcbb26a/cedar-policy-core/src/evaluator.rs#L279
-        // https://github.com/cedar-policy/cedar/blob/67131d64bb80cfa9cc861e999ede365d1bcbb26a/cedar-policy-core/src/evaluator.rs#L279
         return switch (expr) {
             .literal => |v| PartialValue.value(Value.literal(v)),
             .variable => |v| switch (v) {
@@ -236,7 +247,7 @@ const Evaluator = struct {
                 break :blk PartialValue.residual(Expr.unknown());
             },
             .binary => |v| blk: {
-                std.debug.print("binary {any}\n", .{v});
+                //std.debug.print("binary {any}\n", .{v});
                 const a = try self.partialInterpret(v.arg1.*);
                 const b = try self.partialInterpret(v.arg2.*);
                 const op = v.op;
@@ -251,15 +262,11 @@ const Evaluator = struct {
                     },
                 };
                 switch (v.op) {
-                    .eq => {
-                        const eq = std.meta.eql(va, vb);
-                        std.debug.print("are {any} and {any} meta.eq? {any}\n", .{ va, vb, eq });
-                        break :blk PartialValue.value(
-                            Value.literal(
-                                Expr.Literal.boolean(eq),
-                            ),
-                        );
-                    },
+                    .eq => break :blk PartialValue.value(
+                        Value.literal(
+                            Expr.Literal.boolean(va.eq(vb)),
+                        ),
+                    ),
                     .lt, .lte, .add, .sub, .mul => {
                         const la = try va.asLong();
                         const lb = try vb.asLong();

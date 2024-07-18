@@ -481,6 +481,27 @@ pub const Expr = union(enum) {
         pub fn entity(v: EntityUID) @This() {
             return .{ .entity = v };
         }
+
+        pub fn eql(self: @This(), other: @This()) bool {
+            return switch (self) {
+                .bool => |v| switch (other) {
+                    .bool => |vv| vv == v,
+                    else => false,
+                },
+                .long => |v| switch (other) {
+                    .long => |vv| vv == v,
+                    else => false,
+                },
+                .string => |v| switch (other) {
+                    .string => |vv| std.mem.eql(u8, v, vv),
+                    else => false,
+                },
+                .entity => |v| switch (other) {
+                    .entity => |vv| std.mem.eql(u8, v.type, vv.type) and std.mem.eql(u8, v.id, vv.id),
+                    else => false,
+                },
+            };
+        }
     };
 
     pub const Var = enum {
