@@ -523,7 +523,7 @@ fn parseAction(allocator: std.mem.Allocator, tokens: []Token, index: usize) !str
         if (try parseEntity(allocator, tokens, i)) |entityRes| {
             i, const entity = entityRes;
             action = types.Action.eq(
-                types.Ref.id(entity),
+                entity,
             );
         } else {
             return error.ExpectedEntity;
@@ -536,7 +536,8 @@ fn parseAction(allocator: std.mem.Allocator, tokens: []Token, index: usize) !str
         if (matches(tokens, i, .list_open)) {
             i = i + 1;
             if (try parseEntityList(allocator, tokens, i)) |listRes| {
-                i, _ = listRes;
+                i, const list = listRes;
+                action = types.Action.in(list);
                 // todo: capture list
             }
             try expectMatch(tokens, i, .list_close, error.ExpectedListClose);
@@ -544,7 +545,7 @@ fn parseAction(allocator: std.mem.Allocator, tokens: []Token, index: usize) !str
         } else if (try parseEntity(allocator, tokens, i)) |entityRes| {
             i, const entity = entityRes;
             action = types.Action.in(
-                types.Ref.id(entity),
+                &.{entity},
             );
         }
     }

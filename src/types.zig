@@ -95,6 +95,15 @@ pub const CedarType = union(enum) {
         return .{ .set = .{ .elems = elems } };
     }
 
+    /// Aggregate Expr types require pointers to other Exprs.
+    /// Use this fn to promote those values onto heap allocated values
+    /// callers are responsible for freeing allocated memory
+    // pub fn heapify(self: @This(), allocator: std.mem.Allocator) !*const @This() {
+    //     const copy = try allocator.create(@This());
+    //     copy.* = self;
+    //     return copy;
+    // }
+
     pub fn format(
         self: @This(),
         comptime _: []const u8,
@@ -360,18 +369,18 @@ pub const Principal = union(enum) {
 /// defines what a principal may or may not do
 pub const Action = union(enum) {
     any: void,
-    in: Ref, // todo: extend to also represent a list of refs
-    eq: Ref,
+    in: []const EntityUID,
+    eq: EntityUID,
 
     pub fn any() @This() {
         return .{ .any = {} };
     }
 
-    pub fn in(ref: Ref) @This() {
-        return .{ .in = ref };
+    pub fn in(list: []const EntityUID) @This() {
+        return .{ .in = list };
     }
 
-    pub fn eq(ref: Ref) @This() {
+    pub fn eq(ref: EntityUID) @This() {
         return .{ .eq = ref };
     }
 
@@ -391,8 +400,14 @@ pub const Action = union(enum) {
     pub fn toExpr(self: *const @This(), allocator: std.mem.Allocator) !Expr {
         return switch (self.*) {
             .any => Expr.literal(Expr.Literal.boolean(true)),
-            .in => |v| Expr.in(try Expr.variable(.action).heapify(allocator), try v.toExpr(.principal).heapify(allocator)), // note: actions will never have slots
-            .eq => |v| Expr.eq(try Expr.variable(.action).heapify(allocator), try v.toExpr(.principal).heapify(allocator)), // note: actions will never have slots
+            .in => |v| blk: {
+                var set = try std.ArrayList(*const Expr).initCapacity(allocator, v.len);
+                for (v) |elem| {
+                    set.appendAssumeCapacity(try Expr.literal(Expr.Literal.entity(elem)).heapify(allocator));
+                }
+                break :blk Expr.set(try set.toOwnedSlice());
+            },
+            .eq => |v| Expr.eq(try Expr.variable(.action).heapify(allocator), try Expr.literal(Expr.Literal.entity(v)).heapify(allocator)), // note: actions will never have slots
         };
     }
 };
@@ -554,14 +569,15 @@ pub const Expr = union(enum) {
     // todo: like
     is: struct { expr: *const Expr, type: []const u8 }, // should we have a wrapper for EntityTypes?
     // todo: set
+    set: []*const Expr,
     // todo: record
     unknown: void, // used for eval purposes, todo add some information
 
     /// Aggregate Expr types require pointers to other Exprs.
     /// Use this fn to promote those values onto heap allocated values
     /// callers are responsible for freeing allocated memory
-    pub fn heapify(self: @This(), allocator: std.mem.Allocator) !*const Expr {
-        const copy = try allocator.create(Expr);
+    pub fn heapify(self: @This(), allocator: std.mem.Allocator) !*const @This() {
+        const copy = try allocator.create(@This());
         copy.* = self;
         return copy;
     }
@@ -664,6 +680,10 @@ pub const Expr = union(enum) {
         return .{
             .is = .{ .expr = expr, .type = entityType },
         };
+    }
+
+    pub fn set(elems: []*const Expr) @This() {
+        return .{ .set = elems };
     }
 
     // todo like and others

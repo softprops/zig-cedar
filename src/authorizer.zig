@@ -93,6 +93,14 @@ pub const Value = union(enum) {
             else => false,
         };
     }
+
+    fn toExpr(self: @This(), _: std.mem.Allocator) !Expr {
+        return switch (self) {
+            .literal => |v| Expr.literal(v),
+            .set => return error.TODO,
+            .record => return error.TODO,
+        };
+    }
 };
 
 test "Value.asBool" {
@@ -252,6 +260,17 @@ const Evaluator = struct {
         // https://github.com/cedar-policy/cedar/blob/67131d64bb80cfa9cc861e999ede365d1bcbb26a/cedar-policy-core/src/evaluator.rs#L279
         return switch (expr) {
             .literal => |v| PartialValue.value(Value.literal(v)),
+            .set => |v| blk: {
+                var partials = try std.ArrayList(PartialValue).initCapacity(self.arena.allocator(), v.len);
+                defer partials.deinit();
+                for (v) |elem| {
+                    partials.appendAssumeCapacity(try self.partialInterpret(elem.*));
+                }
+                break :blk switch (try self.split(try partials.toOwnedSlice())) {
+                    .values => return error.TODO,
+                    .residuals => |vv| PartialValue.residual(Expr.set(vv)),
+                };
+            },
             .variable => |v| switch (v) {
                 .principal => self.evalPrincipal(),
                 .action => self.evalAction(),
@@ -408,6 +427,34 @@ const Evaluator = struct {
             },
             else => return error.EvalError, // expect set or entity literal types
         };
+    }
+
+    const Split = union(enum) {
+        values: []const Value,
+        residuals: []*const Expr,
+    };
+
+    fn split(self: @This(), partials: []const PartialValue) !Split {
+        var values = std.ArrayList(Value).init(self.arena.allocator());
+        var residuals = std.ArrayList(*const Expr).init(self.arena.allocator());
+        for (partials) |p| {
+            switch (p) {
+                .value => |v| {
+                    if (residuals.items.len == 0) {
+                        try values.append(v);
+                    } else {
+                        try residuals.append(try (try v.toExpr(self.arena.allocator())).heapify(self.arena.allocator()));
+                    }
+                },
+                .residual => |v| try residuals.append(try v.heapify(self.arena.allocator())),
+            }
+        }
+        if (residuals.items.len == 0) {
+            return .{ .values = try values.toOwnedSlice() };
+        } else {
+            for (values.items) |v| try residuals.append(try (try v.toExpr(self.arena.allocator())).heapify(self.arena.allocator()));
+            return .{ .residuals = try residuals.toOwnedSlice() };
+        }
     }
 };
 
