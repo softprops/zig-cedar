@@ -353,11 +353,6 @@ pub const Principal = union(enum) {
     }
 };
 
-// test "Principal.toExpr" {
-//     const eq = Principal.eq(Ref.id(EntityUID.init("Foo", "bar"))).toExpr();
-//     std.debug.print("{any}", .{eq});
-// }
-
 /// defines what a principal may or may not do
 pub const Action = union(enum) {
     any: void,

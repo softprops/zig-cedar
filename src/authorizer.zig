@@ -270,7 +270,6 @@ const Evaluator = struct {
                 return error.TODO;
             },
             .@"and" => |v| switch (try self.partialInterpret(v.left.*)) {
-                // full eval
                 .value => |ll| if (try ll.asBool())
                     switch (try self.partialInterpret(v.right.*)) {
                         .value => |rr| PartialValue.value(Value.literal(Expr.Literal.boolean(try rr.asBool()))),
@@ -283,19 +282,18 @@ const Evaluator = struct {
                     }
                 else
                     PartialValue.value(Value.literal(Expr.Literal.boolean(false))), // doesn't matter what v.right is, short circut here
-                // partial eval case, return left expr
+
                 .residual => |ll| PartialValue.residual(ll),
             },
             .@"or" => |v| blk: {
                 std.debug.print("or {any}\n", .{v});
                 break :blk switch (try self.partialInterpret(v.left.*)) {
-                    // full eval
-                    .value => |ll| if (try ll.asBool()) PartialValue.value(Value.literal(Expr.Literal.boolean(false))) // doesn't matter what v.right is, short circut here
+                    .value => |ll| if (try ll.asBool()) PartialValue.value(Value.literal(Expr.Literal.boolean(true))) // doesn't matter what v.right is, short circut here
                     else switch (try self.partialInterpret(v.right.*)) {
                         .value => |rr| PartialValue.value(Value.literal(Expr.Literal.boolean(try rr.asBool()))),
                         .residual => |rr| PartialValue.residual(Expr.@"or"(Expr.literal(Expr.Literal.boolean(false)), rr)),
                     },
-                    // partial eval case
+
                     .residual => |ll| PartialValue.residual(Expr.@"or"(ll, v.right.*)),
                 };
             },
@@ -304,7 +302,6 @@ const Evaluator = struct {
                 return error.TODO;
             },
             .binary => |v| blk: {
-                //std.debug.print("binary {any}\n", .{v});
                 const a = try self.partialInterpret(v.arg1.*);
                 const b = try self.partialInterpret(v.arg2.*);
                 const op = v.op;
@@ -349,18 +346,15 @@ const Evaluator = struct {
                 std.debug.print("returning fall through for uninplemented binary op {}\n", .{op});
                 return error.TODO;
             },
-            .is => |v| blk: {
-                std.debug.print("is {any}\n", .{v});
-                break :blk switch (try self.partialInterpret(v.expr.*)) {
-                    .value => |vv| PartialValue.value(
-                        Value.literal(
-                            Expr.Literal.boolean(std.mem.eql(u8, (try vv.asEntity()).type, v.type)),
-                        ),
+            .is => |v| switch (try self.partialInterpret(v.expr.*)) {
+                .value => |vv| PartialValue.value(
+                    Value.literal(
+                        Expr.Literal.boolean(std.mem.eql(u8, (try vv.asEntity()).type, v.type)),
                     ),
-                    .residual => |vv| PartialValue.residual(
-                        Expr.isEntityType(try vv.heapify(self.arena.allocator()), v.type),
-                    ),
-                };
+                ),
+                .residual => |vv| PartialValue.residual(
+                    Expr.isEntityType(try vv.heapify(self.arena.allocator()), v.type),
+                ),
             },
             .unknown => PartialValue.residual(expr), // the unknown case
         };
@@ -368,7 +362,6 @@ const Evaluator = struct {
 };
 
 test "Evaluator.evaluate" {
-    // if (true) return error.SkipZigTest;
     const allocator = std.testing.allocator;
     var eval = try Evaluator.init(allocator, .{
         .principal = EntityUID.init("User", "a"),
