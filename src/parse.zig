@@ -750,7 +750,7 @@ fn parseExpr(allocator: std.mem.Allocator, tokens: []Token, index: usize) !?stru
         const arg2 = types.Expr.literal(.{ .entity = arg2Entity });
         return .{
             i,
-            types.Expr.in(arg1, arg2),
+            types.Expr.in(try arg1.heapify(allocator), try arg2.heapify(allocator)),
         };
     }
     return null;

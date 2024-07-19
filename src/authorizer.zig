@@ -51,15 +51,9 @@ pub const Value = union(enum) {
         return switch (self) {
             .literal => |l| switch (l) {
                 .bool => |v| v,
-                else => |v| blk: {
-                    std.debug.print("expected literal bool but recieved a literal {s}\n", .{@tagName(v)});
-                    break :blk error.EvalError;
-                },
+                else => error.EvalError,
             },
-            else => |v| blk: {
-                std.debug.print("expected literal but recieved a {s}\n", .{@tagName(v)});
-                break :blk error.EvalError;
-            },
+            else => error.EvalError,
         };
     }
 
@@ -69,15 +63,9 @@ pub const Value = union(enum) {
         return switch (self) {
             .literal => |l| switch (l) {
                 .long => |v| v,
-                else => |v| blk: {
-                    std.debug.print("expected literal long but recieved a literal {s}\n", .{@tagName(v)});
-                    break :blk error.EvalError;
-                },
+                else => error.EvalError,
             },
-            else => |v| blk: {
-                std.debug.print("expected literal value but recieved a {s}\n", .{@tagName(v)});
-                break :blk error.EvalError;
-            },
+            else => error.EvalError,
         };
     }
 
@@ -180,7 +168,16 @@ pub const Authorizer = struct {
         entities: Entities,
     ) Response {
         // see https://github.com/cedar-policy/cedar/blob/fdcd70375c838be589e586392c0f95c623b9a78d/cedar-policy-core/src/authorizer.rs#L93
-        const eval = Evaluator.init(request, entities);
+
+        var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+        defer _ = gpa.deinit();
+        const allocator = gpa.allocator();
+
+        var eval = Evaluator.init(allocator, request, entities) catch |e| {
+            std.debug.print("eval error: {any}\n", .{e});
+            return .{ .decision = .deny };
+        };
+        defer eval.deinit();
         for (policySet.policies) |p| {
             // todo: aggregate answers to from all policies before
             // coming to a decision
@@ -200,17 +197,26 @@ const PartialResponse = struct {};
 
 // internal implementation
 const Evaluator = struct {
+    arena: *std.heap.ArenaAllocator,
     request: Authorizer.Request,
     entities: Entities,
 
-    fn init(request: Authorizer.Request, entities: Entities) @This() {
-        return .{ .request = request, .entities = entities };
+    fn init(allocator: std.mem.Allocator, request: Authorizer.Request, entities: Entities) !@This() {
+        const arena = try allocator.create(std.heap.ArenaAllocator);
+        arena.* = std.heap.ArenaAllocator.init(allocator);
+        return .{ .arena = arena, .request = request, .entities = entities };
+    }
+
+    fn deinit(self: *@This()) void {
+        const alloc = self.arena.child_allocator;
+        self.arena.deinit();
+        alloc.destroy(self.arena);
     }
 
     /// evaluates an expression, returns true if this results an a literal `true` result
     fn evaluate(self: @This(), policy: Policy) !bool {
         // todo: pass policy.env
-        return (try self.interpret(policy.condition())).asBool();
+        return (try self.interpret(try policy.condition(self.arena.allocator()))).asBool();
     }
 
     /// translates a partial interpreter result to an error
@@ -223,28 +229,21 @@ const Evaluator = struct {
     }
 
     fn evalPrincipal(self: @This()) PartialValue {
-        std.debug.print("evaling principal to a partial value {}\n", .{self.request.principal});
         return PartialValue.value(Value.literal(Expr.Literal.entity(self.request.principal)));
     }
 
     fn evalAction(self: @This()) PartialValue {
-        std.debug.print("evaling action to a partial value {}\n", .{self.request.action});
         return PartialValue.value(Value.literal(Expr.Literal.entity(self.request.action)));
     }
 
     fn evalResource(self: @This()) PartialValue {
-        std.debug.print("evaling resource to a partial value {}\n", .{self.request.resource});
         return PartialValue.value(Value.literal(Expr.Literal.entity(self.request.resource)));
     }
 
     fn partialInterpret(self: @This(), expr: Expr) !PartialValue {
         // https://github.com/cedar-policy/cedar/blob/67131d64bb80cfa9cc861e999ede365d1bcbb26a/cedar-policy-core/src/evaluator.rs#L279
-        std.debug.print("partially interpretting expr: {any}\n", .{expr});
         return switch (expr) {
-            .literal => |v| blk: {
-                std.debug.print("yielding literal {any}\n", .{v});
-                break :blk PartialValue.value(Value.literal(v));
-            },
+            .literal => |v| PartialValue.value(Value.literal(v)),
             .variable => |v| switch (v) {
                 .principal => self.evalPrincipal(),
                 .action => self.evalAction(),
@@ -263,20 +262,22 @@ const Evaluator = struct {
                 std.debug.print("if/then/else {any}\n", .{v});
                 return error.TODO;
             },
-            .@"and" => |v| blk: {
-                std.debug.print("and {any}\n", .{v});
-                break :blk switch (try self.partialInterpret(v.left.*)) {
-                    // full eval
-                    .value => |ll| if (try ll.asBool())
-                        switch (try self.partialInterpret(v.right.*)) {
-                            .value => |rr| PartialValue.value(Value.literal(Expr.Literal.boolean(try rr.asBool()))),
-                            .residual => |rr| PartialValue.residual(Expr.@"and"(Expr.literal(Expr.Literal.boolean(true)), rr)),
-                        }
-                    else
-                        PartialValue.value(Value.literal(Expr.Literal.boolean(false))), // doesn't matter what v.right is, short circut here
-                    // partial eval case, return left expr
-                    .residual => |ll| PartialValue.residual(ll),
-                };
+            .@"and" => |v| switch (try self.partialInterpret(v.left.*)) {
+                // full eval
+                .value => |ll| if (try ll.asBool())
+                    switch (try self.partialInterpret(v.right.*)) {
+                        .value => |rr| PartialValue.value(Value.literal(Expr.Literal.boolean(try rr.asBool()))),
+                        .residual => |rr| PartialValue.residual(
+                            Expr.@"and"(
+                                try Expr.literal(Expr.Literal.boolean(true)).heapify(self.arena.allocator()),
+                                try rr.heapify(self.arena.allocator()),
+                            ),
+                        ),
+                    }
+                else
+                    PartialValue.value(Value.literal(Expr.Literal.boolean(false))), // doesn't matter what v.right is, short circut here
+                // partial eval case, return left expr
+                .residual => |ll| PartialValue.residual(ll),
             },
             .@"or" => |v| blk: {
                 std.debug.print("or {any}\n", .{v});
@@ -309,7 +310,7 @@ const Evaluator = struct {
                         .value => return error.TODO,
                         .residual => |bb| {
                             std.debug.print("returning residual for binary op {}\n", .{op});
-                            return PartialValue.residual(Expr.binary(op, aa, bb));
+                            return PartialValue.residual(Expr.binary(op, try aa.heapify(self.arena.allocator()), try bb.heapify(self.arena.allocator())));
                         },
                     },
                 };
@@ -350,7 +351,7 @@ const Evaluator = struct {
                         ),
                     ),
                     .residual => |vv| PartialValue.residual(
-                        Expr.isEntityType(vv, v.type),
+                        Expr.isEntityType(try vv.heapify(self.arena.allocator()), v.type),
                     ),
                 };
             },
@@ -360,13 +361,14 @@ const Evaluator = struct {
 };
 
 test "Evaluator.evaluate" {
-    if (true) return error.SkipZigTest;
+    // if (true) return error.SkipZigTest;
     const allocator = std.testing.allocator;
-    const eval = Evaluator.init(.{
+    var eval = try Evaluator.init(allocator, .{
         .principal = EntityUID.init("User", "a"),
         .action = EntityUID.init("Action", "b"),
         .resource = EntityUID.init("Resource", "c"),
     }, .{});
+    defer eval.deinit();
     var policySet = try @import("root.zig").parse(allocator,
         \\permit(
         \\    principal == User::"a",

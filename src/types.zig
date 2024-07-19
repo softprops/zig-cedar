@@ -295,14 +295,16 @@ pub const Scope = struct {
         try writer.print("({s},{s},{s})", .{ self.principal, self.action, self.resource });
     }
 
-    fn condition(self: @This()) Expr {
-        //if (true) return self.principal.toExpr();
+    fn condition(
+        self: @This(),
+        allocator: std.mem.Allocator,
+    ) !Expr {
         return Expr.@"and"(
-            //  Expr.@"and"(
-            self.principal.toExpr(),
-            //     self.action.toExpr(),
-            // ),
-            self.resource.toExpr(),
+            try Expr.@"and"(
+                try (try self.principal.toExpr(allocator)).heapify(allocator),
+                try (try self.action.toExpr(allocator)).heapify(allocator),
+            ).heapify(allocator),
+            try (try self.resource.toExpr(allocator)).heapify(allocator),
         );
     }
 };
@@ -341,12 +343,12 @@ pub const Principal = union(enum) {
         }
     }
 
-    pub fn toExpr(self: *const @This()) Expr {
+    pub fn toExpr(self: *const @This(), allocator: std.mem.Allocator) !Expr {
         return switch (self.*) {
             .any => Expr.literal(Expr.Literal.boolean(true)),
-            .in => |v| Expr.in(Expr.variable(.principal), v.toExpr(.principal)),
-            .eq => |v| Expr.eq(Expr.variable(.principal), v.toExpr(.principal)),
-            .is => |v| Expr.isEntityType(Expr.variable(.principal), v),
+            .in => |v| Expr.in(try Expr.variable(.principal).heapify(allocator), try v.toExpr(.principal).heapify(allocator)),
+            .eq => |v| Expr.eq(try Expr.variable(.principal).heapify(allocator), try v.toExpr(.principal).heapify(allocator)),
+            .is => |v| Expr.isEntityType(try Expr.variable(.principal).heapify(allocator), v),
         };
     }
 };
@@ -387,11 +389,11 @@ pub const Action = union(enum) {
         }
     }
 
-    pub fn toExpr(self: *const @This()) Expr {
+    pub fn toExpr(self: *const @This(), allocator: std.mem.Allocator) !Expr {
         return switch (self.*) {
             .any => Expr.literal(Expr.Literal.boolean(true)),
-            .in => |v| Expr.in(Expr.variable(.action), v.toExpr(.principal)), // note: actions will never have slots
-            .eq => |v| Expr.eq(Expr.variable(.action), v.toExpr(.principal)), // note: actions will never have slots
+            .in => |v| Expr.in(try Expr.variable(.action).heapify(allocator), try v.toExpr(.principal).heapify(allocator)), // note: actions will never have slots
+            .eq => |v| Expr.eq(try Expr.variable(.action).heapify(allocator), try v.toExpr(.principal).heapify(allocator)), // note: actions will never have slots
         };
     }
 };
@@ -430,12 +432,12 @@ pub const Resource = union(enum) {
         }
     }
 
-    pub fn toExpr(self: *const @This()) Expr {
+    pub fn toExpr(self: *const @This(), allocator: std.mem.Allocator) !Expr {
         return switch (self.*) {
             .any => Expr.literal(Expr.Literal.boolean(true)),
-            .in => |v| Expr.in(Expr.variable(.resource), v.toExpr(.resource)),
-            .eq => |v| Expr.eq(Expr.variable(.resource), v.toExpr(.resource)),
-            .is => |v| Expr.isEntityType(Expr.variable(.resource), v),
+            .in => |v| Expr.in(try Expr.variable(.resource).heapify(allocator), try v.toExpr(.resource).heapify(allocator)),
+            .eq => |v| Expr.eq(try Expr.variable(.resource).heapify(allocator), try v.toExpr(.resource).heapify(allocator)),
+            .is => |v| Expr.isEntityType(try Expr.variable(.resource).heapify(allocator), v),
         };
     }
 };
@@ -556,6 +558,15 @@ pub const Expr = union(enum) {
     // todo: record
     unknown: void, // used for eval purposes, todo add some information
 
+    /// Aggregate Expr types require pointers to other Exprs.
+    /// Use this fn to promote those values onto heap allocated values
+    /// callers are responsible for freeing allocated memory
+    pub fn heapify(self: @This(), allocator: std.mem.Allocator) !*const Expr {
+        const copy = try allocator.create(Expr);
+        copy.* = self;
+        return copy;
+    }
+
     pub fn literal(value: Literal) @This() {
         return .{ .literal = value };
     }
@@ -572,8 +583,8 @@ pub const Expr = union(enum) {
         return .{ .slot = value };
     }
 
-    pub fn @"and"(l: Expr, r: Expr) @This() {
-        return .{ .@"and" = .{ .left = &l, .right = &r } };
+    pub fn @"and"(l: *const Expr, r: *const Expr) @This() {
+        return .{ .@"and" = .{ .left = l, .right = r } };
     }
 
     pub fn @"or"(l: Expr, r: Expr) @This() {
@@ -603,55 +614,56 @@ pub const Expr = union(enum) {
 
     // binary ops
 
-    pub fn binary(op: BinaryOp, arg1: Expr, arg2: Expr) @This() {
+    pub fn binary(op: BinaryOp, arg1: *const Expr, arg2: *const Expr) @This() {
         return .{
-            .binary = .{ .op = op, .arg1 = &arg1, .arg2 = &arg2 },
+            // FIXME don't take address here
+            .binary = .{ .op = op, .arg1 = arg1, .arg2 = arg2 },
         };
     }
 
-    pub fn eq(arg1: Expr, arg2: Expr) @This() {
+    pub fn eq(arg1: *const Expr, arg2: *const Expr) @This() {
         return binary(.eq, arg1, arg2);
     }
 
-    pub fn lt(arg1: Expr, arg2: Expr) @This() {
+    pub fn lt(arg1: *const Expr, arg2: *const Expr) @This() {
         return binary(.lt, arg1, arg2);
     }
 
-    pub fn lte(arg1: Expr, arg2: Expr) @This() {
+    pub fn lte(arg1: *const Expr, arg2: *const Expr) @This() {
         return binary(.lte, arg1, arg2);
     }
 
-    pub fn add(arg1: Expr, arg2: Expr) @This() {
+    pub fn add(arg1: *const Expr, arg2: *const Expr) @This() {
         return binary(.add, arg1, arg2);
     }
 
-    pub fn sub(arg1: Expr, arg2: Expr) @This() {
+    pub fn sub(arg1: *const Expr, arg2: *const Expr) @This() {
         return binary(.sub, arg1, arg2);
     }
 
-    pub fn mul(arg1: Expr, arg2: Expr) @This() {
+    pub fn mul(arg1: *const Expr, arg2: *const Expr) @This() {
         return binary(.mul, arg1, arg2);
     }
 
-    pub fn in(arg1: Expr, arg2: Expr) @This() {
+    pub fn in(arg1: *const Expr, arg2: *const Expr) @This() {
         return binary(.in, arg1, arg2);
     }
 
-    pub fn contains(arg1: Expr, arg2: Expr) @This() {
+    pub fn contains(arg1: *const Expr, arg2: *const Expr) @This() {
         return binary(.contains, arg1, arg2);
     }
 
-    pub fn containsAll(arg1: Expr, arg2: Expr) @This() {
+    pub fn containsAll(arg1: *const Expr, arg2: *const Expr) @This() {
         return binary(.contains_all, arg1, arg2);
     }
 
-    pub fn containsAny(arg1: Expr, arg2: Expr) @This() {
+    pub fn containsAny(arg1: *const Expr, arg2: *const Expr) @This() {
         return binary(.contains_any, arg1, arg2);
     }
 
-    pub fn isEntityType(expr: Expr, entityType: []const u8) @This() {
+    pub fn isEntityType(expr: *const Expr, entityType: []const u8) @This() {
         return .{
-            .is = .{ .expr = &expr, .type = entityType },
+            .is = .{ .expr = expr, .type = entityType },
         };
     }
 
@@ -668,9 +680,9 @@ pub const Expr = union(enum) {
         writer: anytype,
     ) !void {
         switch (self) {
-            //.binary => |v| try writer.print("<{s} expr {} {s} {}>", .{ @tagName(self), v.arg1, @tagName(v.op), v.arg2 }),
-            //.literal => |v| try writer.print("<{s} expr {any}>", .{ @tagName(self), v }),
-            //.variable => |v| try writer.print("<{s} expr {s}>", .{ @tagName(self), @tagName(v) }),
+            .binary => |v| try writer.print("<{s} expr {} {s} {}>", .{ @tagName(self), v.arg1, @tagName(v.op), v.arg2 }),
+            .literal => |v| try writer.print("<{s} expr {any}>", .{ @tagName(self), v }),
+            .variable => |v| try writer.print("<{s} expr {s}>", .{ @tagName(self), @tagName(v) }),
             else => try writer.print("<{s} expr>", .{@tagName(self)}),
         }
     }
@@ -699,9 +711,12 @@ pub const Policy = struct {
         try writer.print(";", .{});
     }
 
-    pub fn condition(self: @This()) Expr {
+    pub fn condition(
+        self: @This(),
+        allocator: std.mem.Allocator,
+    ) !Expr {
         // todo: include unless/when contexts where available
-        return self.scope.condition();
+        return try self.scope.condition(allocator);
     }
 };
 
