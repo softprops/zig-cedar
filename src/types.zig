@@ -731,26 +731,61 @@ pub const PolicySet = struct {
 pub const Entity = struct {
     uuid: EntityUID,
     //attrs:  std.StringHashMap(PartialValueSerializedAsExpr),
-    ancestors: std.ArrayList(EntityUID),
+    ancestors: []const EntityUID,
 };
 
 /// https://docs.cedarpolicy.com/auth/entities-syntax.html
 pub const Entities = struct {
     pub const Mode = enum { concrete, partial };
+    const EntityMap = std.HashMap(
+        EntityUID,
+        Entity,
+        struct {
+            pub fn hash(_: @This(), key: EntityUID) u64 {
+                var h = std.hash.Wyhash.init(0);
+                h.update(key.type);
+                h.update(key.id);
+                return h.final();
+            }
+
+            pub fn eql(_: @This(), a: EntityUID, b: EntityUID) bool {
+                return std.mem.eql(u8, a.type, b.type) and std.mem.eql(u8, a.id, b.id);
+            }
+        },
+        std.hash_map.default_max_load_percentage,
+    );
 
     // todo
     arena: *std.heap.ArenaAllocator,
-    entities: std.AutoHashMap(EntityUID, Entity),
+    entities: EntityMap,
     mode: Mode = .concrete,
 
-    fn init(arena: *std.heap.ArenaAllocator, entities: std.AutoHashMap(EntityUID, Entity), mode: Mode) @This() {
+    fn init(arena: *std.heap.ArenaAllocator, entities: EntityMap, mode: Mode) @This() {
         return .{ .arena = arena, .entities = entities, .mode = mode };
     }
 
-    pub fn fromJson(allocator: std.mem.Allocator, _: []const u8) !Entities {
+    fn get(self: @This(), id: EntityUID) ?Entity {
+        return self.entities.get(id);
+    }
+
+    // todo: pass along schema where this is one
+    pub fn fromJson(allocator: std.mem.Allocator, source: []const u8) !Entities {
         const arena = try allocator.create(std.heap.ArenaAllocator);
         arena.* = std.heap.ArenaAllocator.init(allocator);
-        return init(arena, std.AutoHashMap(EntityUID, Entity).init(arena.allocator()), .concrete);
+        const parsed = try std.json.parseFromSliceLeaky([]const EntityJson, arena.allocator(), source, .{
+            .ignore_unknown_fields = true,
+            .allocate = .alloc_always,
+        });
+        var entities = EntityMap.init(arena.allocator());
+        for (parsed) |entity| {
+            const id = entity.uid.normalize();
+            var parents = try std.ArrayList(EntityUID).initCapacity(arena.allocator(), entity.parents.len);
+            for (entity.parents) |p| {
+                parents.appendAssumeCapacity(p.normalize());
+            }
+            try entities.put(id, .{ .uuid = id, .ancestors = try parents.toOwnedSlice() });
+        }
+        return init(arena, entities, .concrete);
     }
 
     pub fn deinit(self: *@This()) void {
@@ -759,6 +794,30 @@ pub const Entities = struct {
         alloc.destroy(self.arena);
     }
 };
+
+test Entities {
+    const allocator = std.testing.allocator;
+    var entities = try Entities.fromJson(allocator,
+        \\[
+        \\    {
+        \\        "uid": { "type": "User", "id": "alice" },
+        \\        "attrs": {
+        \\            "department": "HardwareEngineering",
+        \\            "jobLevel": 5,
+        \\            "homeIp": { "__extn": { "fn": "ip", "arg": "222.222.222.7" } },
+        \\            "confidenceScore": { "__extn": { "fn": "decimal", "arg": "33.57" } }
+        \\        },
+        \\        "parents": [
+        \\            { "type": "UserGroup", "id": "alice_friends" },
+        \\            { "type": "UserGroup", "id": "bob_friends" }
+        \\        ]
+        \\    }
+        \\]
+    );
+    defer entities.deinit();
+    try std.testing.expectEqualDeep(EntityUID.init("User", "alice"), entities.get(EntityUID.init("User", "alice")).?.uuid);
+    try std.testing.expect(entities.get(EntityUID.init("User", "ahmad")) == null);
+}
 
 /// https://docs.cedarpolicy.com/auth/entities-syntax.html#entities
 const EntityJson = struct {
