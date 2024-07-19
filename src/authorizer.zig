@@ -133,6 +133,13 @@ test "Value.eql" {
     }
 }
 
+/// information intended for responding to "why?" questions
+pub const Diagnostics = struct {
+    /// policy ids of policies that contributed to the decision
+    reason: []const []const u8 = &.{},
+    // errors
+};
+
 /// The primary interface for answering authorization questions
 pub const Authorizer = struct {
     pub const Response = struct {
@@ -143,7 +150,7 @@ pub const Authorizer = struct {
         };
         /// the authorization decision, defaults to deny
         decision: Decision = .deny,
-        // todo: add diagnostics
+        diagnostics: Diagnostics = .{},
     };
 
     /// per-request authorization query inputs
