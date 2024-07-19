@@ -265,6 +265,7 @@ pub const Ref = union(enum) {
         }
     }
 
+    /// returs either a literal expr or a slot expr to fill in with a given slot id
     fn toExpr(self: @This(), slotId: SlotId) Expr {
         return switch (self) {
             .id => |v| Expr.literal(Expr.Literal.entity(v)),
@@ -295,6 +296,7 @@ pub const Scope = struct {
     }
 
     fn condition(self: @This()) Expr {
+        //if (true) return self.principal.toExpr();
         return Expr.@"and"(
             //  Expr.@"and"(
             self.principal.toExpr(),
@@ -339,8 +341,8 @@ pub const Principal = union(enum) {
         }
     }
 
-    pub fn toExpr(self: @This()) Expr {
-        return switch (self) {
+    pub fn toExpr(self: *const @This()) Expr {
+        return switch (self.*) {
             .any => Expr.literal(Expr.Literal.boolean(true)),
             .in => |v| Expr.in(Expr.variable(.principal), v.toExpr(.principal)),
             .eq => |v| Expr.eq(Expr.variable(.principal), v.toExpr(.principal)),
@@ -348,6 +350,11 @@ pub const Principal = union(enum) {
         };
     }
 };
+
+// test "Principal.toExpr" {
+//     const eq = Principal.eq(Ref.id(EntityUID.init("Foo", "bar"))).toExpr();
+//     std.debug.print("{any}", .{eq});
+// }
 
 /// defines what a principal may or may not do
 pub const Action = union(enum) {
@@ -380,8 +387,8 @@ pub const Action = union(enum) {
         }
     }
 
-    pub fn toExpr(self: @This()) Expr {
-        return switch (self) {
+    pub fn toExpr(self: *const @This()) Expr {
+        return switch (self.*) {
             .any => Expr.literal(Expr.Literal.boolean(true)),
             .in => |v| Expr.in(Expr.variable(.action), v.toExpr(.principal)), // note: actions will never have slots
             .eq => |v| Expr.eq(Expr.variable(.action), v.toExpr(.principal)), // note: actions will never have slots
@@ -423,8 +430,8 @@ pub const Resource = union(enum) {
         }
     }
 
-    pub fn toExpr(self: @This()) Expr {
-        return switch (self) {
+    pub fn toExpr(self: *const @This()) Expr {
+        return switch (self.*) {
             .any => Expr.literal(Expr.Literal.boolean(true)),
             .in => |v| Expr.in(Expr.variable(.resource), v.toExpr(.resource)),
             .eq => |v| Expr.eq(Expr.variable(.resource), v.toExpr(.resource)),
@@ -610,7 +617,6 @@ pub const Expr = union(enum) {
         return binary(.lt, arg1, arg2);
     }
 
-    // todo: refactor impls to binary(op, arg1, arg2)
     pub fn lte(arg1: Expr, arg2: Expr) @This() {
         return binary(.lte, arg1, arg2);
     }
@@ -661,7 +667,12 @@ pub const Expr = union(enum) {
         _: std.fmt.FormatOptions,
         writer: anytype,
     ) !void {
-        try writer.print("<{s} expr>", .{@tagName(self)});
+        switch (self) {
+            //.binary => |v| try writer.print("<{s} expr {} {s} {}>", .{ @tagName(self), v.arg1, @tagName(v.op), v.arg2 }),
+            //.literal => |v| try writer.print("<{s} expr {any}>", .{ @tagName(self), v }),
+            //.variable => |v| try writer.print("<{s} expr {s}>", .{ @tagName(self), @tagName(v) }),
+            else => try writer.print("<{s} expr>", .{@tagName(self)}),
+        }
     }
 };
 

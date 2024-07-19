@@ -9,13 +9,18 @@ const Expr = @import("types.zig").Expr;
 const SlotEnv = @import("types.zig").SlotEnv;
 const CendarType = @import("types.zig").CedarType;
 
+/// Represents an evalution outcome which is either a value or residual expression
 pub const PartialValue = union(enum) {
+    /// a successfully evaluated value
     value: Value,
+    /// an incomplete result an evaluation
     residual: Expr,
+
     /// declares a resolved value
     fn value(v: Value) @This() {
         return .{ .value = v };
     }
+
     /// declares an unresolved or partially evaluated expression
     fn residual(e: Expr) @This() {
         return .{ .residual = e };
@@ -40,31 +45,43 @@ pub const Value = union(enum) {
         return .{ .record = v };
     }
 
-    /// return bool value if this is a literal bool
+    /// returns a bool value if this is a literal bool
     /// otherwise return an EvalError
     fn asBool(self: @This()) !bool {
         return switch (self) {
             .literal => |l| switch (l) {
                 .bool => |v| v,
-                else => error.EvalError,
+                else => |v| blk: {
+                    std.debug.print("expected literal bool but recieved a literal {s}\n", .{@tagName(v)});
+                    break :blk error.EvalError;
+                },
             },
-            else => error.EvalError,
+            else => |v| blk: {
+                std.debug.print("expected literal but recieved a {s}\n", .{@tagName(v)});
+                break :blk error.EvalError;
+            },
         };
     }
 
-    /// return i64 value if this is a literal i64
+    /// returns an i64 value if this is a literal i64
     /// otherwise return an EvalError
     fn asLong(self: @This()) !i64 {
         return switch (self) {
             .literal => |l| switch (l) {
                 .long => |v| v,
-                else => error.EvalError,
+                else => |v| blk: {
+                    std.debug.print("expected literal long but recieved a literal {s}\n", .{@tagName(v)});
+                    break :blk error.EvalError;
+                },
             },
-            else => error.EvalError,
+            else => |v| blk: {
+                std.debug.print("expected literal value but recieved a {s}\n", .{@tagName(v)});
+                break :blk error.EvalError;
+            },
         };
     }
 
-    /// return EntityUID value if this is a literal EntityUID
+    /// returns an EntityUID value if this is a literal EntityUID
     /// otherwise return an EvalError
     fn asEntity(self: @This()) !EntityUID {
         return switch (self) {
@@ -78,7 +95,7 @@ pub const Value = union(enum) {
 
     // std.meta.eq is shallow and auto hashing does not support  net.Address
     // https://github.com/ziglang/zig/issues/19003
-    fn eq(self: @This(), other: @This()) bool {
+    fn eql(self: @This(), other: @This()) bool {
         return switch (self) {
             .literal => |v| switch (other) {
                 .literal => |vv| v.eql(vv),
@@ -95,12 +112,29 @@ test "Value.asBool" {
     try std.testing.expect(try Value.literal(Expr.Literal.boolean(true)).asBool());
 }
 
-test "Value meta.eq" {
+test "Value.asLong" {
+    // only Expr.Literal long values are valid
+    try std.testing.expectError(error.EvalError, Value.literal(Expr.Literal.entity(EntityUID.init("User", "alice"))).asLong());
+    try std.testing.expectEqual(1, try Value.literal(Expr.Literal.long(1)).asLong());
+}
+
+test "Value.asEntity" {
+    // only Expr.Literal entity values are valid
+    try std.testing.expectError(error.EvalError, Value.literal(Expr.Literal.boolean(true)).asEntity());
+    try std.testing.expect(
+        std.meta.eql(
+            EntityUID.init("User", "alice"),
+            (try Value.literal(Expr.Literal.entity(EntityUID.init("User", "alice"))).asEntity()),
+        ),
+    );
+}
+
+test "Value.eql" {
     for ([_]struct { l: Value, r: Value, expect: bool }{
         .{ .l = Value.literal(Expr.Literal.entity(EntityUID.init("foo", "bar"))), .r = Value.literal(Expr.Literal.entity(EntityUID.init("foo", "bar"))), .expect = true },
         .{ .l = Value.literal(Expr.Literal.entity(EntityUID.init("foo", "bar"))), .r = Value.literal(Expr.Literal.entity(EntityUID.init("foo", "baz"))), .expect = false },
     }) |case| {
-        const eq = std.meta.eql(case.l, case.r);
+        const eq = case.l.eql(case.r);
         std.testing.expect(if (case.expect) eq else !eq) catch |err| {
             std.debug.print(
                 "expected {any} when comparing {any} and {any}",
@@ -121,6 +155,7 @@ pub const Authorizer = struct {
         };
         /// the authorization decision, defaults to deny
         decision: Decision = .deny,
+        // todo: add diagnostics
     };
 
     /// per-request authorization query inputs
@@ -144,16 +179,19 @@ pub const Authorizer = struct {
         policySet: PolicySet,
         entities: Entities,
     ) Response {
-        // see //https://github.com/cedar-policy/cedar/blob/fdcd70375c838be589e586392c0f95c623b9a78d/cedar-policy-core/src/authorizer.rs#L93
-        // todo compute response from policy tests
+        // see https://github.com/cedar-policy/cedar/blob/fdcd70375c838be589e586392c0f95c623b9a78d/cedar-policy-core/src/authorizer.rs#L93
         const eval = Evaluator.init(request, entities);
         for (policySet.policies) |p| {
-            const result = eval.evaluate(p) catch {
-                // todo communicate error
+            // todo: aggregate answers to from all policies before
+            // coming to a decision
+            const result = eval.evaluate(p) catch |e| {
+                // todo communicate error through response type
+                std.debug.print("eval error: {any}\n", .{e});
                 return .{ .decision = .deny };
             };
             return .{ .decision = if (result) .allow else .deny };
         }
+        // default to deny
         return .{ .decision = .deny };
     }
 };
@@ -185,43 +223,45 @@ const Evaluator = struct {
     }
 
     fn evalPrincipal(self: @This()) PartialValue {
+        std.debug.print("evaling principal to a partial value {}\n", .{self.request.principal});
         return PartialValue.value(Value.literal(Expr.Literal.entity(self.request.principal)));
     }
 
     fn evalAction(self: @This()) PartialValue {
+        std.debug.print("evaling action to a partial value {}\n", .{self.request.action});
         return PartialValue.value(Value.literal(Expr.Literal.entity(self.request.action)));
     }
 
     fn evalResource(self: @This()) PartialValue {
+        std.debug.print("evaling resource to a partial value {}\n", .{self.request.resource});
         return PartialValue.value(Value.literal(Expr.Literal.entity(self.request.resource)));
-    }
-
-    fn evalContext(_: @This()) PartialValue {
-        // todo: impl me
-        return PartialValue.residual(Expr.unknown());
     }
 
     fn partialInterpret(self: @This(), expr: Expr) !PartialValue {
         // https://github.com/cedar-policy/cedar/blob/67131d64bb80cfa9cc861e999ede365d1bcbb26a/cedar-policy-core/src/evaluator.rs#L279
+        std.debug.print("partially interpretting expr: {any}\n", .{expr});
         return switch (expr) {
-            .literal => |v| PartialValue.value(Value.literal(v)),
+            .literal => |v| blk: {
+                std.debug.print("yielding literal {any}\n", .{v});
+                break :blk PartialValue.value(Value.literal(v));
+            },
             .variable => |v| switch (v) {
                 .principal => self.evalPrincipal(),
                 .action => self.evalAction(),
                 .resource => self.evalResource(),
-                .context => self.evalContext(),
+                .context => return error.TODO,
             },
-            .pattern => |v| blk: {
+            .pattern => |v| {
                 std.debug.print("pattern {any}\n", .{v});
-                break :blk PartialValue.residual(Expr.unknown());
+                return error.TODO;
             },
-            .slot => |v| blk: {
+            .slot => |v| {
                 std.debug.print("slot {any}\n", .{v});
-                break :blk PartialValue.residual(Expr.unknown());
+                return error.TODO;
             },
-            .ite => |v| blk: {
+            .ite => |v| {
                 std.debug.print("if/then/else {any}\n", .{v});
-                break :blk PartialValue.residual(Expr.unknown());
+                return error.TODO;
             },
             .@"and" => |v| blk: {
                 std.debug.print("and {any}\n", .{v});
@@ -230,21 +270,30 @@ const Evaluator = struct {
                     .value => |ll| if (try ll.asBool())
                         switch (try self.partialInterpret(v.right.*)) {
                             .value => |rr| PartialValue.value(Value.literal(Expr.Literal.boolean(try rr.asBool()))),
-                            .residual => |rr| PartialValue.residual(Expr.add(Expr.literal(Expr.Literal.boolean(true)), rr)),
+                            .residual => |rr| PartialValue.residual(Expr.@"and"(Expr.literal(Expr.Literal.boolean(true)), rr)),
                         }
                     else
-                        PartialValue.value(Value.literal(Expr.Literal.boolean(false))), // short circut here
+                        PartialValue.value(Value.literal(Expr.Literal.boolean(false))), // doesn't matter what v.right is, short circut here
                     // partial eval case, return left expr
                     .residual => |ll| PartialValue.residual(ll),
                 };
             },
             .@"or" => |v| blk: {
                 std.debug.print("or {any}\n", .{v});
-                break :blk PartialValue.residual(Expr.unknown());
+                break :blk switch (try self.partialInterpret(v.left.*)) {
+                    // full eval
+                    .value => |ll| if (try ll.asBool()) PartialValue.value(Value.literal(Expr.Literal.boolean(false))) // doesn't matter what v.right is, short circut here
+                    else switch (try self.partialInterpret(v.right.*)) {
+                        .value => |rr| PartialValue.value(Value.literal(Expr.Literal.boolean(try rr.asBool()))),
+                        .residual => |rr| PartialValue.residual(Expr.@"or"(Expr.literal(Expr.Literal.boolean(false)), rr)),
+                    },
+                    // partial eval case
+                    .residual => |ll| PartialValue.residual(Expr.@"or"(ll, v.right.*)),
+                };
             },
-            .unary => |v| blk: {
+            .unary => |v| {
                 std.debug.print("unary {any}\n", .{v});
-                break :blk PartialValue.residual(Expr.unknown());
+                return error.TODO;
             },
             .binary => |v| blk: {
                 //std.debug.print("binary {any}\n", .{v});
@@ -258,13 +307,16 @@ const Evaluator = struct {
                     },
                     .residual => |aa| switch (b) {
                         .value => return error.TODO,
-                        .residual => |bb| return PartialValue.residual(Expr.binary(op, aa, bb)),
+                        .residual => |bb| {
+                            std.debug.print("returning residual for binary op {}\n", .{op});
+                            return PartialValue.residual(Expr.binary(op, aa, bb));
+                        },
                     },
                 };
                 switch (v.op) {
                     .eq => break :blk PartialValue.value(
                         Value.literal(
-                            Expr.Literal.boolean(va.eq(vb)),
+                            Expr.Literal.boolean(va.eql(vb)),
                         ),
                     ),
                     .lt, .lte, .add, .sub, .mul => {
@@ -286,7 +338,8 @@ const Evaluator = struct {
                     .contains_all => {},
                     .contains_any => {},
                 }
-                break :blk PartialValue.residual(Expr.unknown());
+                std.debug.print("returning fall through for uninplemented binary op {}\n", .{op});
+                return error.TODO;
             },
             .is => |v| blk: {
                 std.debug.print("is {any}\n", .{v});
@@ -304,6 +357,26 @@ const Evaluator = struct {
             .unknown => PartialValue.residual(expr), // the unknown case
         };
     }
-
-    //fn eval_if(self: @This(), i: Expr, t: Expr, e: Expr)
 };
+
+test "Evaluator.evaluate" {
+    if (true) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    const eval = Evaluator.init(.{
+        .principal = EntityUID.init("User", "a"),
+        .action = EntityUID.init("Action", "b"),
+        .resource = EntityUID.init("Resource", "c"),
+    }, .{});
+    var policySet = try @import("root.zig").parse(allocator,
+        \\permit(
+        \\    principal == User::"a",
+        \\    action == Action::"b",
+        \\    resource == Resource::"c"
+        \\);
+    );
+    defer policySet.deinit();
+    try std.testing.expect(eval.evaluate(policySet.policies[0]) catch |err| {
+        std.debug.print("expected true but error was returned {any}\n", .{err});
+        return err;
+    });
+}
