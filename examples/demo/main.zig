@@ -25,15 +25,25 @@ pub fn main() !void {
     );
     defer policySet.deinit();
 
+    var entities = try cedar.Entities.fromJson(allocator,
+        \\[]
+    );
+    defer entities.deinit();
     // 👇 an Authorizer computes an answer the question "can this y do y with z?"
-    const result = cedar.Authorizer.init().isAuthorized(.{
-        // 👇 the principal is the actor in question
-        .principal = cedar.EntityUID.init("PhotoApp::User", "alice"),
-        // 👇 the action is what the principal is requesting to do
-        .action = cedar.EntityUID.init("PhotoApp::Action", "viewPhoto"),
-        // 👇 the resource is what the action applies to
-        .resource = cedar.EntityUID.init("PhotoApp::Photo", "vacationPhoto.jpg"),
-    }, policySet, .{});
+    const result = cedar.Authorizer.init().isAuthorized(
+        .{
+            // 👇 the principal is the actor in question
+            .principal = cedar.EntityUID.init("PhotoApp::User", "alice"),
+            // 👇 the action is what the principal is requesting to do
+            .action = cedar.EntityUID.init("PhotoApp::Action", "viewPhoto"),
+            // 👇 the resource is what the action applies to
+            .resource = cedar.EntityUID.init("PhotoApp::Photo", "vacationPhoto.jpg"),
+        },
+        // 👇 the policies to enforce
+        policySet,
+        // 👇 the entities policy can reference
+        entities,
+    );
 
     // 👇 do something with the authorization decision. the default is deny unless permitted
     switch (result.decision) {

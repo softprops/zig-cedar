@@ -363,11 +363,22 @@ const Evaluator = struct {
 
 test "Evaluator.evaluate" {
     const allocator = std.testing.allocator;
-    var eval = try Evaluator.init(allocator, .{
-        .principal = EntityUID.init("User", "a"),
-        .action = EntityUID.init("Action", "b"),
-        .resource = EntityUID.init("Resource", "c"),
-    }, .{});
+    var entities = try Entities.fromJson(
+        allocator,
+        \\[]
+        ,
+    );
+    defer entities.deinit();
+
+    var eval = try Evaluator.init(
+        allocator,
+        .{
+            .principal = EntityUID.init("User", "a"),
+            .action = EntityUID.init("Action", "b"),
+            .resource = EntityUID.init("Resource", "c"),
+        },
+        entities,
+    );
     defer eval.deinit();
     var policySet = try @import("root.zig").parse(allocator,
         \\permit(

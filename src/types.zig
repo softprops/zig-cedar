@@ -739,11 +739,28 @@ pub const Entities = struct {
     pub const Mode = enum { concrete, partial };
 
     // todo
-    //allocator: std.mem.Allocator,
-    //entities: std.AutoHashMap(EntityUID, Entity),
+    arena: *std.heap.ArenaAllocator,
+    entities: std.AutoHashMap(EntityUID, Entity),
     mode: Mode = .concrete,
+
+    fn init(arena: *std.heap.ArenaAllocator, entities: std.AutoHashMap(EntityUID, Entity), mode: Mode) @This() {
+        return .{ .arena = arena, .entities = entities, .mode = mode };
+    }
+
+    pub fn fromJson(allocator: std.mem.Allocator, _: []const u8) !Entities {
+        const arena = try allocator.create(std.heap.ArenaAllocator);
+        arena.* = std.heap.ArenaAllocator.init(allocator);
+        return init(arena, std.AutoHashMap(EntityUID, Entity).init(arena.allocator()), .concrete);
+    }
+
+    pub fn deinit(self: *@This()) void {
+        const alloc = self.arena.child_allocator;
+        self.arena.deinit();
+        alloc.destroy(self.arena);
+    }
 };
 
+/// https://docs.cedarpolicy.com/auth/entities-syntax.html#entities
 const EntityJson = struct {
     pub const EntityJsonExt = struct {
         @"fn": []const u8,
