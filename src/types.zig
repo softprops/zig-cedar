@@ -226,6 +226,10 @@ pub const EntityUID = struct {
         }
     }
 
+    pub fn eql(self: @This(), other: EntityUID) bool {
+        return std.mem.eql(u8, self.type, other.type) and std.mem.eql(u8, self.id, other.id);
+    }
+
     pub fn format(
         self: @This(),
         comptime _: []const u8,
@@ -732,11 +736,32 @@ pub const Entity = struct {
     uuid: EntityUID,
     //attrs:  std.StringHashMap(PartialValueSerializedAsExpr),
     ancestors: []const EntityUID,
+
+    /// return true if id is contained within ancestors
+    pub fn isDecendantOf(self: @This(), id: EntityUID) bool {
+        for (self.ancestors) |a| {
+            if (a.eql(id)) {
+                return true;
+            }
+        }
+        return false;
+    }
 };
 
 /// https://docs.cedarpolicy.com/auth/entities-syntax.html
 pub const Entities = struct {
     pub const Mode = enum { concrete, partial };
+    pub const Dereference = union(enum) {
+        none: void,
+        residual: Expr,
+        data: Entity,
+        fn get(self: @This()) ?Entity {
+            return switch (self) {
+                .data => |v| v,
+                else => null,
+            };
+        }
+    };
     const EntityMap = std.HashMap(
         EntityUID,
         Entity,
@@ -749,7 +774,7 @@ pub const Entities = struct {
             }
 
             pub fn eql(_: @This(), a: EntityUID, b: EntityUID) bool {
-                return std.mem.eql(u8, a.type, b.type) and std.mem.eql(u8, a.id, b.id);
+                return a.eql(b);
             }
         },
         std.hash_map.default_max_load_percentage,
@@ -764,11 +789,17 @@ pub const Entities = struct {
         return .{ .arena = arena, .entities = entities, .mode = mode };
     }
 
-    fn get(self: @This(), id: EntityUID) ?Entity {
-        return self.entities.get(id);
+    /// get an entity by its id
+    pub fn entity(self: @This(), id: EntityUID) Dereference {
+        return if (self.entities.get(id)) |e|
+            .{ .data = e }
+        else switch (self.mode) {
+            .concrete => .{ .none = {} },
+            .partial => .{ .residual = Expr.unknown() },
+        };
     }
 
-    // todo: pass along schema where this is one
+    // todo: pass along schema where this is one and validate what was parsed is actually expected
     pub fn fromJson(allocator: std.mem.Allocator, source: []const u8) !Entities {
         const arena = try allocator.create(std.heap.ArenaAllocator);
         arena.* = std.heap.ArenaAllocator.init(allocator);
@@ -777,10 +808,10 @@ pub const Entities = struct {
             .allocate = .alloc_always,
         });
         var entities = EntityMap.init(arena.allocator());
-        for (parsed) |entity| {
-            const id = entity.uid.normalize();
-            var parents = try std.ArrayList(EntityUID).initCapacity(arena.allocator(), entity.parents.len);
-            for (entity.parents) |p| {
+        for (parsed) |e| {
+            const id = e.uid.normalize();
+            var parents = try std.ArrayList(EntityUID).initCapacity(arena.allocator(), e.parents.len);
+            for (e.parents) |p| {
                 parents.appendAssumeCapacity(p.normalize());
             }
             try entities.put(id, .{ .uuid = id, .ancestors = try parents.toOwnedSlice() });
@@ -815,8 +846,8 @@ test Entities {
         \\]
     );
     defer entities.deinit();
-    try std.testing.expectEqualDeep(EntityUID.init("User", "alice"), entities.get(EntityUID.init("User", "alice")).?.uuid);
-    try std.testing.expect(entities.get(EntityUID.init("User", "ahmad")) == null);
+    try std.testing.expectEqualDeep(EntityUID.init("User", "alice"), entities.entity(EntityUID.init("User", "alice")).get().?.uuid);
+    try std.testing.expect(entities.entity(EntityUID.init("User", "ahmad")).get() == null);
 }
 
 /// https://docs.cedarpolicy.com/auth/entities-syntax.html#entities

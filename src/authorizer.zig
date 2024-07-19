@@ -4,6 +4,7 @@ const Policy = @import("types.zig").Policy;
 const Context = @import("root.zig").Context;
 const Schema = @import("root.zig").Schema;
 const Entities = @import("root.zig").Entities;
+const Entity = @import("types.zig").Entity;
 const EntityUID = @import("root.zig").EntityUID;
 const Expr = @import("types.zig").Expr;
 const SlotEnv = @import("types.zig").SlotEnv;
@@ -338,7 +339,17 @@ const Evaluator = struct {
                             }),
                         );
                     },
-                    .in => {},
+                    .in => {
+                        const id = va.asEntity() catch |err| {
+                            std.debug.print("expected arg1 to be an entity but instead it was was a {any}", .{va});
+                            return err;
+                        };
+                        break :blk switch (self.entities.entity(id)) {
+                            .data => |e| self.evalIn(id, e, vb),
+                            .none => self.evalIn(id, null, vb),
+                            .residual => return error.TODO, //|v| PartialValue.residual(Expr.in(try v.heapify(allocator), v)),
+                        };
+                    },
                     .contains => {},
                     .contains_all => {},
                     .contains_any => {},
@@ -359,13 +370,63 @@ const Evaluator = struct {
             .unknown => PartialValue.residual(expr), // the unknown case
         };
     }
+
+    /// resolves to partial value true, if arg2 is a literal entity value that matches uid or entity is a decendant of it
+    fn evalIn(_: @This(), uid: EntityUID, entity: ?Entity, arg2: Value) !PartialValue {
+        return switch (arg2) {
+            .literal => |v| switch (v) {
+                .entity => |e| blk: {
+                    if (e.eql(uid)) {
+                        break :blk PartialValue.value(Value.literal(Expr.Literal.boolean(true)));
+                    }
+                    if (entity) |ent| {
+                        break :blk PartialValue.value(Value.literal(Expr.Literal.boolean(ent.isDecendantOf(e))));
+                    }
+                    break :blk PartialValue.value(Value.literal(Expr.Literal.boolean(false)));
+                },
+                else => return error.EvalError, // expect entity literal type
+            },
+            .set => |v| blk: {
+                for (v.elems) |ct| {
+                    switch (ct) {
+                        .entity => |e| {
+                            if (e.eql(uid)) {
+                                break :blk PartialValue.value(Value.literal(Expr.Literal.boolean(true)));
+                            }
+                            if (entity) |ent| {
+                                if (ent.isDecendantOf(e)) {
+                                    break :blk PartialValue.value(Value.literal(Expr.Literal.boolean(true)));
+                                }
+                            }
+                        },
+                        else => {}, // loop over non entity types
+                    }
+                } else {
+                    // if nothing matched, resolve to false
+                    break :blk PartialValue.value(Value.literal(Expr.Literal.boolean(false)));
+                }
+            },
+            else => return error.EvalError, // expect set or entity literal types
+        };
+    }
 };
 
 test "Evaluator.evaluate" {
     const allocator = std.testing.allocator;
     var entities = try Entities.fromJson(
         allocator,
-        \\[]
+        \\[{
+        \\  "uid": { "type": "User", "id": "a" },
+        \\  "attrs": {},
+        \\  "parents": [{
+        \\     "type":"Role",
+        \\     "id": "admin"
+        \\  }]
+        \\}, {
+        \\  "uid": { "type": "Role", "id": "admin" },
+        \\  "attrs": {},
+        \\  "parents": []
+        \\}]
         ,
     );
     defer entities.deinit();
@@ -380,14 +441,16 @@ test "Evaluator.evaluate" {
         entities,
     );
     defer eval.deinit();
+
     var policySet = try @import("root.zig").parse(allocator,
         \\permit(
-        \\    principal == User::"a",
+        \\    principal in Role::"admin",
         \\    action == Action::"b",
         \\    resource == Resource::"c"
         \\);
     );
     defer policySet.deinit();
+
     try std.testing.expect(eval.evaluate(policySet.policies[0]) catch |err| {
         std.debug.print("expected true but error was returned {any}\n", .{err});
         return err;
