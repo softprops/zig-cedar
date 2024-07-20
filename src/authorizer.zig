@@ -320,13 +320,22 @@ const Evaluator = struct {
                         .value => |rr| PartialValue.value(Value.literal(Expr.Literal.boolean(try rr.asBool()))),
                         .residual => |rr| PartialValue.residual(Expr.@"or"(Expr.literal(Expr.Literal.boolean(false)), rr)),
                     },
-
                     .residual => |ll| PartialValue.residual(Expr.@"or"(ll, v.right.*)),
                 };
             },
-            .unary => |v| {
-                std.debug.print("unary {any}\n", .{v});
-                return error.TODO;
+            .unary => |v| switch (try self.partialInterpret(v.arg.*)) {
+                .value => |vv| switch (v.op) {
+                    .not => PartialValue.value(Value.literal(Expr.Literal.boolean(try vv.asBool()))),
+                    .neg => blk: {
+                        if (std.math.negate(try vv.asLong())) |neg| {
+                            break :blk PartialValue.value(Value.literal(Expr.Literal.long(neg)));
+                        } else |err| {
+                            std.debug.print("error negating long {any}: {any}", .{ v, err });
+                            return error.EvalError;
+                        }
+                    },
+                },
+                .residual => |vv| PartialValue.residual(Expr.unary(v.op, try vv.heapify(self.arena.allocator()))),
             },
             .binary => |v| blk: {
                 const a = try self.partialInterpret(v.arg1.*);

@@ -656,16 +656,18 @@ pub const Expr = union(enum) {
 
     // unary ops
 
-    pub fn neg(arg: Expr) @This() {
+    pub fn unary(op: UnaryOp, arg: *const Expr) @This() {
         return .{
-            .unary = .{ .op = .neg, .arg = &arg },
+            .unary = .{ .op = op, .arg = arg },
         };
     }
 
-    pub fn not(arg: Expr) @This() {
-        return .{
-            .unary = .{ .op = .not, .arg = &arg },
-        };
+    pub fn neg(arg: *const Expr) @This() {
+        return unary(.neg, arg);
+    }
+
+    pub fn not(arg: *const Expr) @This() {
+        return unary(.not, arg);
     }
 
     // binary ops
