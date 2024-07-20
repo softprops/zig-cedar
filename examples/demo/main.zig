@@ -25,6 +25,8 @@ pub fn main() !void {
     );
     defer policySet.deinit();
 
+    // 👇 entities that need to be resolved to check constraints. this may be empty for static policies
+    //    often times it will be needed to look up "in" constraints
     var entities = try cedar.Entities.fromJson(allocator,
         \\[]
     );
