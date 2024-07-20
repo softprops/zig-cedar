@@ -280,6 +280,7 @@ pub const Ref = union(enum) {
 
     /// returs either a literal expr or a slot expr to fill in with a given slot id
     fn toExpr(self: @This(), slotId: SlotId) Expr {
+        // todo: fill in slot if possible
         return switch (self) {
             .id => |v| Expr.literal(Expr.Literal.entity(v)),
             .slot => Expr.slot(slotId),
@@ -312,6 +313,8 @@ pub const Scope = struct {
         self: @This(),
         allocator: std.mem.Allocator,
     ) !Expr {
+        // https://github.com/cedar-policy/cedar/blob/300d50f3798c7962f7d25bcbb01a44f3e30a5304/cedar-policy-core/src/ast/policy.rs#L1015
+        // todo: fill principal/resource exprs with slots
         return Expr.@"and"(
             try Expr.@"and"(
                 try (try self.principal.toExpr(allocator)).heapify(allocator),
@@ -324,14 +327,23 @@ pub const Scope = struct {
 
 /// the "who" component of a scope
 pub const Principal = union(enum) {
+    pub const IsIn = struct { is: []const u8, in: Ref };
     any: void,
     in: Ref,
     eq: Ref,
     is: []const u8,
-    //isIn: todo: impl me, note this is essentially a combination of is and in as one contraint
+    isIn: IsIn,
 
     pub fn any() @This() {
         return .{ .any = {} };
+    }
+
+    pub fn is(value: []const u8) @This() {
+        return .{ .is = value };
+    }
+
+    pub fn isIn(value: IsIn) @This() {
+        return .{ .isIn = value };
     }
 
     pub fn in(ref: Ref) @This() {
@@ -353,6 +365,7 @@ pub const Principal = union(enum) {
             .in => |v| try writer.print("principal in {s}", .{v}),
             .eq => |v| try writer.print("principal == {s}", .{v}),
             .is => |v| try writer.print("principal is {s}", .{v}),
+            .isIn => |v| try writer.print("principal is {s} in {s}", .{ v.is, v.in }),
         }
     }
 
@@ -362,6 +375,10 @@ pub const Principal = union(enum) {
             .in => |v| Expr.in(try Expr.variable(.principal).heapify(allocator), try v.toExpr(.principal).heapify(allocator)),
             .eq => |v| Expr.eq(try Expr.variable(.principal).heapify(allocator), try v.toExpr(.principal).heapify(allocator)),
             .is => |v| Expr.isEntityType(try Expr.variable(.principal).heapify(allocator), v),
+            .isIn => |v| Expr.@"and"(
+                try Expr.isEntityType(try Expr.variable(.principal).heapify(allocator), v.is).heapify(allocator),
+                try Expr.in(try Expr.variable(.principal).heapify(allocator), try v.in.toExpr(.principal).heapify(allocator)).heapify(allocator),
+            ),
         };
     }
 };
@@ -414,11 +431,12 @@ pub const Action = union(enum) {
 
 /// defines the subject an action is to be taken
 pub const Resource = union(enum) {
+    pub const IsIn = struct { is: []const u8, in: Ref };
     any: void,
     in: Ref,
     eq: Ref,
     is: []const u8,
-    //isIn: //isIn: todo: impl me
+    isIn: IsIn,
 
     pub fn any() @This() {
         return .{ .any = {} };
@@ -432,6 +450,14 @@ pub const Resource = union(enum) {
         return .{ .eq = ref };
     }
 
+    pub fn is(value: []const u8) @This() {
+        return .{ .is = value };
+    }
+
+    pub fn isIn(value: IsIn) @This() {
+        return .{ .isIn = value };
+    }
+
     pub fn format(
         self: @This(),
         comptime _: []const u8,
@@ -443,6 +469,7 @@ pub const Resource = union(enum) {
             .in => |v| try writer.print("resource in {s}", .{v}),
             .eq => |v| try writer.print("resource == {s}", .{v}),
             .is => |v| try writer.print("resource is {s}", .{v}),
+            .isIn => |v| try writer.print("resource is {s} in {s}", .{ v.is, v.in }),
         }
     }
 
@@ -452,6 +479,10 @@ pub const Resource = union(enum) {
             .in => |v| Expr.in(try Expr.variable(.resource).heapify(allocator), try v.toExpr(.resource).heapify(allocator)),
             .eq => |v| Expr.eq(try Expr.variable(.resource).heapify(allocator), try v.toExpr(.resource).heapify(allocator)),
             .is => |v| Expr.isEntityType(try Expr.variable(.resource).heapify(allocator), v),
+            .isIn => |v| Expr.@"and"(
+                try Expr.isEntityType(try Expr.variable(.resource).heapify(allocator), v.is).heapify(allocator),
+                try Expr.in(try Expr.variable(.resource).heapify(allocator), try v.in.toExpr(.resource).heapify(allocator)).heapify(allocator),
+            ),
         };
     }
 };
@@ -715,7 +746,7 @@ pub const Policy = struct {
     scope: Scope,
     when: ?Expr = null,
     unless: ?Expr = null,
-    // env: SlotEnv,
+    //env: SlotEnv,
 
     pub fn format(
         self: @This(),

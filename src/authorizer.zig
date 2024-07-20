@@ -447,7 +447,6 @@ const Evaluator = struct {
                     try values.append(v)
                 else
                     try residuals.append(try (try v.toExpr(self.arena.allocator())).heapify(self.arena.allocator())),
-
                 .residual => |v| try residuals.append(try v.heapify(self.arena.allocator())),
             }
         }
@@ -493,7 +492,7 @@ test "Evaluator.evaluate" {
 
     var policySet = try @import("root.zig").parse(allocator,
         \\permit(
-        \\    principal in Role::"admin",
+        \\    principal is User in Role::"admin",
         \\    action in [Action::"b", Action::"d"],
         \\    resource == Resource::"c"
         \\);

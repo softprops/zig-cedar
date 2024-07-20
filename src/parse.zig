@@ -15,6 +15,7 @@ const Token = struct {
         @"?resource",
         context,
 
+        is,
         in,
         has,
         like,
@@ -145,6 +146,7 @@ const BUILTINS = [_]Builtin{
     .{ .name = "true", .kind = .true },
     .{ .name = "false", .kind = .false },
     .{ .name = "has", .kind = .has },
+    .{ .name = "is", .kind = .is },
     .{ .name = "in", .kind = .in },
     .{ .name = "::", .kind = .path_separator },
     .{ .name = "==", .kind = .eq },
@@ -472,7 +474,38 @@ fn parsePrincipal(allocator: std.mem.Allocator, tokens: []Token, index: usize) !
 
     var principal = types.Principal.any();
 
-    if (matches(tokens, i, .in)) {
+    // 'is' PATH
+    if (matches(tokens, i, .is)) {
+        i = i + 1;
+        if (try parsePath(allocator, tokens, i)) |pathRes| {
+            i, const is = pathRes;
+
+            // ['in' (Entity | '?principal')]
+            if (matches(tokens, i, .in)) {
+                i = i + 1;
+                if (try parseEntity(allocator, tokens, i)) |entityRes| {
+                    i, const entity = entityRes;
+                    principal = types.Principal.isIn(.{
+                        .is = is,
+                        .in = types.Ref.id(entity),
+                    });
+                } else if (matches(tokens, i, .@"?principal")) {
+                    i = i + 1;
+                    principal = types.Principal.isIn(.{
+                        .is = is,
+                        .in = types.Ref.slot(),
+                    });
+                } else {
+                    return error.ExpectedEntityOrSlot;
+                }
+            }
+            principal = types.Principal.is(is);
+        } else {
+            return error.ExpectedPath;
+        }
+    }
+    // 'in' (Entity | '?principal')
+    else if (matches(tokens, i, .in)) {
         i = i + 1;
         if (try parseEntity(allocator, tokens, i)) |entityRes| {
             i, const entity = entityRes;
@@ -500,7 +533,6 @@ fn parsePrincipal(allocator: std.mem.Allocator, tokens: []Token, index: usize) !
         } else {
             return error.ExpectedEntity;
         }
-        // 'in' ('[' EntList ']' | Entity)
     }
 
     return .{
@@ -563,8 +595,53 @@ fn parseResource(allocator: std.mem.Allocator, tokens: []Token, index: usize) !s
 
     var resource = types.Resource.any();
 
+    // 'is' PATH
+    if (matches(tokens, i, .is)) {
+        i = i + 1;
+        if (try parsePath(allocator, tokens, i)) |pathRes| {
+            i, const is = pathRes;
+
+            // ['in' (Entity | '?resource')]
+            if (matches(tokens, i, .in)) {
+                i = i + 1;
+                if (try parseEntity(allocator, tokens, i)) |entityRes| {
+                    i, const entity = entityRes;
+                    resource = types.Resource.isIn(.{
+                        .is = is,
+                        .in = types.Ref.id(entity),
+                    });
+                } else if (matches(tokens, i, .@"?resource")) {
+                    i = i + 1;
+                    resource = types.Resource.isIn(.{
+                        .is = is,
+                        .in = types.Ref.slot(),
+                    });
+                } else {
+                    return error.ExpectedEntityOrSlot;
+                }
+            }
+            resource = types.Resource.is(is);
+        } else {
+            return error.ExpectedPath;
+        }
+    }
+    // 'in' (Entity | '?resource')
+    else if (matches(tokens, i, .in)) {
+        i = i + 1;
+        if (try parseEntity(allocator, tokens, i)) |entityRes| {
+            i, const entity = entityRes;
+            resource = types.Resource.in(
+                types.Ref.id(entity),
+            );
+        } else if (matches(tokens, i, .@"?resource")) {
+            i = i + 1;
+            resource = types.Resource.in(types.Ref.slot());
+        } else {
+            return error.ExpectedEntityOrSlot;
+        }
+    }
     // '==' (Entity | '?resource')
-    if (matches(tokens, i, .eq)) {
+    else if (matches(tokens, i, .eq)) {
         i = i + 1;
         if (try parseEntity(allocator, tokens, i)) |entityRes| {
             i, const entity = entityRes;
@@ -603,6 +680,11 @@ fn parseEntity(allocator: std.mem.Allocator, tokens: []Token, index: usize) !?st
     var i = index;
     if (try parsePath(allocator, tokens, i)) |pathRes| {
         i, const path = pathRes;
+
+        // '::'
+        try expectMatch(tokens, i, .path_separator, error.ExpectedPathSeparator);
+        i = i + 1;
+
         // STR ::= Fully-escaped Unicode surrounded by '"'s
         try expectMatch(tokens, i, .string, error.ExpectedEntityId);
         i = i + 1;
@@ -623,8 +705,12 @@ fn parsePath(allocator: std.mem.Allocator, tokens: []Token, index: usize) !?stru
         try list.append(tokens[i].value());
         i = i + 1;
 
-        try expectMatch(tokens, i, .path_separator, error.ExpectedPathSeparator);
-        i = i + 1;
+        // '::' IDENT
+        if (matches(tokens, i, .path_separator) and matches(tokens, i + 1, .ident)) {
+            i = i + 1;
+        } else {
+            break;
+        }
     }
 
     if (list.items.len < 1) {
