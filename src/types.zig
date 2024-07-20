@@ -325,7 +325,11 @@ pub const Scope = struct {
     }
 };
 
-/// the "who" component of a scope
+/// The principal element in a Cedar policy represents a role, user, service, or other identity that can make a request to perform an action on a resource in your application. If the principal making the request matches the principal defined in this policy statement, then this element matches.
+///
+/// The principal element must be present. If you specify only principal without an expression that constrains its scope, then the policy applies to any principal.
+///
+/// https://docs.cedarpolicy.com/policies/syntax-policy.html#term-parc-principal
 pub const Principal = union(enum) {
     pub const IsIn = struct { is: []const u8, in: Ref };
     any: void,
@@ -383,7 +387,9 @@ pub const Principal = union(enum) {
     }
 };
 
-/// defines what a principal may or may not do
+/// The action element in a Cedar policy is a list of the operations in your application for which this policy statement controls access. If the operation in the request matches one of the action items defined in this policy statement, then this element matches.
+///
+/// https://docs.cedarpolicy.com/policies/syntax-policy.html#term-parc-action
 pub const Action = union(enum) {
     any: void,
     in: []const EntityUID,
@@ -429,7 +435,11 @@ pub const Action = union(enum) {
     }
 };
 
-/// defines the subject an action is to be taken
+/// The resource element in a Cedar policy is a resource defined by your application that can be accessed or modified by the specified action.
+///
+/// resource element must be present. If you specify only resource without an expression that constrains its scope, then the policy applies to any resource.
+///
+/// https://docs.cedarpolicy.com/policies/syntax-policy.html#term-parc-resource
 pub const Resource = union(enum) {
     pub const IsIn = struct { is: []const u8, in: Ref };
     any: void,
