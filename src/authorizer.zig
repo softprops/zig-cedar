@@ -272,6 +272,7 @@ const Evaluator = struct {
                     partials.appendAssumeCapacity(try self.partialInterpret(elem.*));
                 }
                 const splitPartials = try self.split(try partials.toOwnedSlice());
+
                 break :blk switch (splitPartials) {
                     .values => |vv| PartialValue.value(Value.set(.{ .elems = vv })),
                     .residuals => |vv| PartialValue.residual(Expr.set(vv)),
@@ -442,13 +443,11 @@ const Evaluator = struct {
         var residuals = std.ArrayList(*const Expr).init(self.arena.allocator());
         for (partials) |p| {
             switch (p) {
-                .value => |v| {
-                    if (residuals.items.len == 0) {
-                        try values.append(v);
-                    } else {
-                        try residuals.append(try (try v.toExpr(self.arena.allocator())).heapify(self.arena.allocator()));
-                    }
-                },
+                .value => |v| if (residuals.items.len == 0)
+                    try values.append(v)
+                else
+                    try residuals.append(try (try v.toExpr(self.arena.allocator())).heapify(self.arena.allocator())),
+
                 .residual => |v| try residuals.append(try v.heapify(self.arena.allocator())),
             }
         }
