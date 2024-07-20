@@ -405,7 +405,7 @@ pub const Action = union(enum) {
                 for (v) |elem| {
                     set.appendAssumeCapacity(try Expr.literal(Expr.Literal.entity(elem)).heapify(allocator));
                 }
-                break :blk Expr.set(try set.toOwnedSlice());
+                break :blk Expr.in(try Expr.variable(.action).heapify(allocator), try Expr.set(try set.toOwnedSlice()).heapify(allocator));
             },
             .eq => |v| Expr.eq(try Expr.variable(.action).heapify(allocator), try Expr.literal(Expr.Literal.entity(v)).heapify(allocator)), // note: actions will never have slots
         };

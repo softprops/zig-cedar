@@ -30,15 +30,20 @@ pub const PartialValue = union(enum) {
 
 /// represents a resolved value from an expression evaluation
 pub const Value = union(enum) {
+    pub const Set = struct {
+        elems: []const Value,
+        // todo: "fast" literal set optimization
+    };
     literal: Expr.Literal,
-    set: CendarType.Set,
+    set: Set,
     record: CendarType.Record,
+    // todo ext
 
     fn literal(v: Expr.Literal) @This() {
         return .{ .literal = v };
     }
 
-    fn set(v: CendarType.Set) @This() {
+    fn set(v: Set) @This() {
         return .{ .set = v };
     }
 
@@ -266,8 +271,9 @@ const Evaluator = struct {
                 for (v) |elem| {
                     partials.appendAssumeCapacity(try self.partialInterpret(elem.*));
                 }
-                break :blk switch (try self.split(try partials.toOwnedSlice())) {
-                    .values => return error.TODO,
+                const splitPartials = try self.split(try partials.toOwnedSlice());
+                break :blk switch (splitPartials) {
+                    .values => |vv| PartialValue.value(Value.set(.{ .elems = vv })),
                     .residuals => |vv| PartialValue.residual(Expr.set(vv)),
                 };
             },
@@ -407,23 +413,20 @@ const Evaluator = struct {
             },
             .set => |v| blk: {
                 for (v.elems) |ct| {
-                    switch (ct) {
-                        .entity => |e| {
-                            if (e.eql(uid)) {
+                    if (ct.asEntity()) |e| {
+                        if (e.eql(uid)) {
+                            break :blk PartialValue.value(Value.literal(Expr.Literal.boolean(true)));
+                        }
+                        if (entity) |ent| {
+                            if (ent.isDecendantOf(e)) {
                                 break :blk PartialValue.value(Value.literal(Expr.Literal.boolean(true)));
                             }
-                            if (entity) |ent| {
-                                if (ent.isDecendantOf(e)) {
-                                    break :blk PartialValue.value(Value.literal(Expr.Literal.boolean(true)));
-                                }
-                            }
-                        },
-                        else => {}, // loop over non entity types
+                        }
+                    } else |err| {
+                        std.debug.print("{}", .{err});
                     }
-                } else {
-                    // if nothing matched, resolve to false
-                    break :blk PartialValue.value(Value.literal(Expr.Literal.boolean(false)));
                 }
+                break :blk PartialValue.value(Value.literal(Expr.Literal.boolean(false)));
             },
             else => return error.EvalError, // expect set or entity literal types
         };
@@ -492,7 +495,7 @@ test "Evaluator.evaluate" {
     var policySet = try @import("root.zig").parse(allocator,
         \\permit(
         \\    principal in Role::"admin",
-        \\    action == Action::"b",
+        \\    action in [Action::"b", Action::"d"],
         \\    resource == Resource::"c"
         \\);
     );
