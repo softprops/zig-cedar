@@ -799,7 +799,7 @@ fn parseExpr(allocator: std.mem.Allocator, tokens: []Token, index: usize) !?stru
 
         return .{
             i,
-            types.Expr.ite(expr1, expr2, expr3),
+            types.Expr.ite(try expr1.heapify(allocator), try expr2.heapify(allocator), try expr3.heapify(allocator)),
         };
     } else {
         // ...

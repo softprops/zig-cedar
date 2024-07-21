@@ -648,9 +648,9 @@ pub const Expr = union(enum) {
     }
 
     /// if .. then .. else ..
-    pub fn ite(i: Expr, t: Expr, e: Expr) @This() {
+    pub fn ite(i: *const Expr, t: *const Expr, e: *const Expr) @This() {
         return .{
-            .ite = .{ .@"if" = &i, .then = &t, .@"else" = &e },
+            .ite = .{ .@"if" = i, .then = t, .@"else" = e },
         };
     }
 

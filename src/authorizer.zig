@@ -292,9 +292,9 @@ const Evaluator = struct {
                 std.debug.print("slot {any}\n", .{v});
                 return error.TODO;
             },
-            .ite => |v| {
-                std.debug.print("if/then/else {any}\n", .{v});
-                return error.TODO;
+            .ite => |v| switch (try self.partialInterpret(v.@"if".*)) {
+                .value => |vv| if (try vv.asBool()) try self.partialInterpret(v.then.*) else try self.partialInterpret(v.@"else".*),
+                .residual => |vv| PartialValue.residual(Expr.ite(try vv.heapify(self.arena.allocator()), try v.then.*.heapify(self.arena.allocator()), try v.@"else".*.heapify(self.arena.allocator()))),
             },
             .@"and" => |v| switch (try self.partialInterpret(v.left.*)) {
                 .value => |ll| if (try ll.asBool())
