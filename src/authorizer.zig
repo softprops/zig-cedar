@@ -293,9 +293,9 @@ const Evaluator = struct {
                 std.debug.print("pattern {any}\n", .{v});
                 return error.TODO;
             },
-            .slot => |v| {
-                std.debug.print("slot {any}\n", .{v});
-                return error.TODO;
+            .slot => |v| switch (v) {
+                .principal => PartialValue.value(Value.literal(Expr.Literal.entity(self.request.principal))),
+                .resource => PartialValue.value(Value.literal(Expr.Literal.entity(self.request.resource))),
             },
             .ite => |v| switch (try self.partialInterpret(v.@"if".*)) {
                 .value => |vv| if (try vv.asBool()) try self.partialInterpret(v.then.*) else try self.partialInterpret(v.@"else".*),
