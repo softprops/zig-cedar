@@ -261,6 +261,11 @@ const Evaluator = struct {
         return PartialValue.value(Value.literal(Expr.Literal.entity(self.request.resource)));
     }
 
+    // added for conventience of resolving to boolean values being the primary intention of this struct
+    inline fn resolved(val: bool) PartialValue {
+        return PartialValue.value(Value.literal(Expr.Literal.boolean(val)));
+    }
+
     fn partialInterpret(self: @This(), expr: Expr) !PartialValue {
         // https://github.com/cedar-policy/cedar/blob/67131d64bb80cfa9cc861e999ede365d1bcbb26a/cedar-policy-core/src/evaluator.rs#L279
         return switch (expr) {
@@ -299,7 +304,7 @@ const Evaluator = struct {
             .@"and" => |v| switch (try self.partialInterpret(v.left.*)) {
                 .value => |ll| if (try ll.asBool())
                     switch (try self.partialInterpret(v.right.*)) {
-                        .value => |rr| PartialValue.value(Value.literal(Expr.Literal.boolean(try rr.asBool()))),
+                        .value => |rr| resolved(try rr.asBool()),
                         .residual => |rr| PartialValue.residual(
                             Expr.@"and"(
                                 try Expr.literal(Expr.Literal.boolean(true)).heapify(self.arena.allocator()),
@@ -308,16 +313,16 @@ const Evaluator = struct {
                         ),
                     }
                 else
-                    PartialValue.value(Value.literal(Expr.Literal.boolean(false))), // doesn't matter what v.right is, short circut here
+                    resolved(false), // doesn't matter what v.right is, short circut here
 
                 .residual => |ll| PartialValue.residual(ll),
             },
             .@"or" => |v| blk: {
                 std.debug.print("or {any}\n", .{v});
                 break :blk switch (try self.partialInterpret(v.left.*)) {
-                    .value => |ll| if (try ll.asBool()) PartialValue.value(Value.literal(Expr.Literal.boolean(true))) // doesn't matter what v.right is, short circut here
+                    .value => |ll| if (try ll.asBool()) resolved(true) // doesn't matter what v.right is, short circut here
                     else switch (try self.partialInterpret(v.right.*)) {
-                        .value => |rr| PartialValue.value(Value.literal(Expr.Literal.boolean(try rr.asBool()))),
+                        .value => |rr| resolved(try rr.asBool()),
                         .residual => |rr| PartialValue.residual(Expr.@"or"(Expr.literal(Expr.Literal.boolean(false)), rr)),
                     },
                     .residual => |ll| PartialValue.residual(Expr.@"or"(ll, v.right.*)),
@@ -325,7 +330,7 @@ const Evaluator = struct {
             },
             .unary => |v| switch (try self.partialInterpret(v.arg.*)) {
                 .value => |vv| switch (v.op) {
-                    .not => PartialValue.value(Value.literal(Expr.Literal.boolean(try vv.asBool()))),
+                    .not => resolved(!try vv.asBool()),
                     .neg => blk: {
                         if (std.math.negate(try vv.asLong())) |neg| {
                             break :blk PartialValue.value(Value.literal(Expr.Literal.long(neg)));
@@ -355,11 +360,7 @@ const Evaluator = struct {
                     },
                 };
                 switch (v.op) {
-                    .eq => break :blk PartialValue.value(
-                        Value.literal(
-                            Expr.Literal.boolean(va.eql(vb)),
-                        ),
-                    ),
+                    .eq => break :blk resolved(va.eql(vb)),
                     .lt, .lte, .add, .sub, .mul => {
                         const la = try va.asLong();
                         const lb = try vb.asLong();
@@ -393,11 +394,7 @@ const Evaluator = struct {
                 return error.TODO;
             },
             .is => |v| switch (try self.partialInterpret(v.expr.*)) {
-                .value => |vv| PartialValue.value(
-                    Value.literal(
-                        Expr.Literal.boolean(std.mem.eql(u8, (try vv.asEntity()).type, v.type)),
-                    ),
-                ),
+                .value => |vv| resolved(std.mem.eql(u8, (try vv.asEntity()).type, v.type)),
                 .residual => |vv| PartialValue.residual(
                     Expr.isEntityType(try vv.heapify(self.arena.allocator()), v.type),
                 ),
@@ -423,18 +420,18 @@ const Evaluator = struct {
                 for (v.elems) |ct| {
                     if (ct.asEntity()) |e| {
                         if (e.eql(uid)) {
-                            break :blk PartialValue.value(Value.literal(Expr.Literal.boolean(true)));
+                            break :blk resolved(true);
                         }
                         if (entity) |ent| {
                             if (ent.isDecendantOf(e)) {
-                                break :blk PartialValue.value(Value.literal(Expr.Literal.boolean(true)));
+                                break :blk resolved(true);
                             }
                         }
                     } else |err| {
                         std.debug.print("{}", .{err});
                     }
                 }
-                break :blk PartialValue.value(Value.literal(Expr.Literal.boolean(false)));
+                break :blk resolved(false);
             },
             else => return error.EvalError, // expect set or entity literal types
         };
