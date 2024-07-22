@@ -95,15 +95,6 @@ pub const CedarType = union(enum) {
         return .{ .set = .{ .elems = elems } };
     }
 
-    /// Aggregate Expr types require pointers to other Exprs.
-    /// Use this fn to promote those values onto heap allocated values
-    /// callers are responsible for freeing allocated memory
-    // pub fn heapify(self: @This(), allocator: std.mem.Allocator) !*const @This() {
-    //     const copy = try allocator.create(@This());
-    //     copy.* = self;
-    //     return copy;
-    // }
-
     pub fn format(
         self: @This(),
         comptime _: []const u8,

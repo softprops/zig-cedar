@@ -407,12 +407,8 @@ const Evaluator = struct {
     fn evalIn(_: @This(), uid: EntityUID, entity: ?Entity, arg2: Value) !PartialValue {
         return switch (arg2) {
             .literal => |v| switch (v) {
-                .entity => |e| PartialValue.value(
-                    Value.literal(
-                        Expr.Literal.boolean(
-                            e.eql(uid) or if (entity) |ent| ent.isDecendantOf(e) else false,
-                        ),
-                    ),
+                .entity => |e| resolved(
+                    e.eql(uid) or if (entity) |ent| ent.isDecendantOf(e) else false,
                 ),
                 else => return error.EvalError, // expect entity literal type
             },
