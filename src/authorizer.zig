@@ -410,15 +410,13 @@ const Evaluator = struct {
     fn evalIn(_: @This(), uid: EntityUID, entity: ?Entity, arg2: Value) !PartialValue {
         return switch (arg2) {
             .literal => |v| switch (v) {
-                .entity => |e| blk: {
-                    if (e.eql(uid)) {
-                        break :blk PartialValue.value(Value.literal(Expr.Literal.boolean(true)));
-                    }
-                    if (entity) |ent| {
-                        break :blk PartialValue.value(Value.literal(Expr.Literal.boolean(ent.isDecendantOf(e))));
-                    }
-                    break :blk PartialValue.value(Value.literal(Expr.Literal.boolean(false)));
-                },
+                .entity => |e| PartialValue.value(
+                    Value.literal(
+                        Expr.Literal.boolean(
+                            e.eql(uid) or if (entity) |ent| ent.isDecendantOf(e) else false,
+                        ),
+                    ),
+                ),
                 else => return error.EvalError, // expect entity literal type
             },
             .set => |v| blk: {
