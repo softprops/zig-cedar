@@ -1,5 +1,55 @@
 const std = @import("std");
 
+/// call indirection for a named ext function
+pub fn ExtensionFunction(comptime T: type) type {
+    return union(enum) {
+        pub const CallStyle = enum {
+            method,
+            function,
+        };
+        unary: struct { name: []const u8, style: CallStyle, func: fn (T, CedarType) anyerror!CedarType },
+        binary: struct { name: []const u8, style: CallStyle, func: fn (T, CedarType, CedarType) anyerror!CedarType },
+
+        fn name(self: *const @This()) []const u8 {
+            return switch (self.*) {
+                .unary => |v| v.name,
+                .binary => |v| v.name,
+            };
+        }
+
+        fn call(self: *const @This(), reciever: T, args: []const CedarType) !CedarType {
+            return switch (self.*) {
+                .unary => |v| blk: {
+                    if (args.len != 1) return error.ExpectedOneArg;
+                    break :blk try v.func(reciever, args[0]);
+                },
+                .binary => |v| blk: {
+                    if (args.len != 2) return error.ExpectedTwoArgs;
+                    break :blk try v.func(reciever, args[0], args[1]);
+                },
+            };
+        }
+    };
+}
+
+test ExtensionFunction {
+    const IntFunc = ExtensionFunction(u64){
+        .unary = .{
+            .name = "add",
+            .style = .function,
+            .func = struct {
+                fn func(reciever: u64, arg: CedarType) !CedarType {
+                    return CedarType.long(reciever + switch (arg) {
+                        .long => |v| v,
+                        else => return error.InvalidExtFunctionArg,
+                    });
+                }
+            }.func,
+        },
+    };
+    try std.testing.expectEqual(3, (try IntFunc.call(2, &.{CedarType.long(1)})).long);
+}
+
 /// https://docs.cedarpolicy.com/policies/syntax-datatypes.html
 pub const CedarType = union(enum) {
     pub const Attribute = struct { []const u8, CedarType };
@@ -19,13 +69,19 @@ pub const CedarType = union(enum) {
 
     /// Extensions are Cedar's way of extending it's typesystem. All Extensions have a name and a means
     /// of parsing their typed value from a string
-    pub fn Extension(comptime T: type, comptime name: []const u8, parseFn: fn ([]const u8) anyerror!T) type {
+    pub fn Extension(
+        comptime T: type,
+        comptime name: []const u8,
+        parseFn: fn ([]const u8) anyerror!T,
+    ) type {
         return struct {
             name: []const u8,
             value: T,
+
             fn init(value: T) @This() {
                 return .{ .name = name, .value = value };
             }
+
             fn parse(s: []const u8) !@This() {
                 return init(try parseFn(s));
             }
@@ -40,12 +96,33 @@ pub const CedarType = union(enum) {
         }
     }.parse);
 
+    pub const AddressWithRange = struct {
+        addr: std.net.Address,
+        prefix: u8,
+    };
+
     /// A value that represents an IP address. It can be either IPv4 or IPv6.
     /// note: only handles ip addresses and not ranges which differs from
     /// https://docs.cedarpolicy.com/policies/syntax-datatypes.html#datatype-ipaddr
-    const Ipaddr = Extension(std.net.Address, "ipaddr", struct {
-        fn parse(s: []const u8) !std.net.Address {
-            return try std.net.Address.parseIp(s, 0);
+    const Ipaddr = Extension(AddressWithRange, "ipaddr", struct {
+        fn parse(s: []const u8) !AddressWithRange {
+            var split = std.mem.splitScalar(u8, s, '/');
+            const addr = split.next().?;
+            if (split.next()) |prefix| {
+                const parsedAddr = try std.net.Address.parseIp(addr, 0);
+                return .{ .addr = parsedAddr, .prefix = @max(try std.fmt.parseInt(u8, prefix, 10), maxPrefix(parsedAddr)) };
+            } else {
+                const parsedAddr = try std.net.Address.parseIp(addr, 0);
+                return .{ .addr = parsedAddr, .prefix = maxPrefix(parsedAddr) };
+            }
+        }
+
+        fn maxPrefix(addr: std.net.Address) u8 {
+            switch (addr) {
+                .in => 32,
+                .in6 => 128,
+                else => unreachable, // other types not supported
+            }
         }
     }.parse);
 
@@ -63,7 +140,7 @@ pub const CedarType = union(enum) {
         unknown: void,
     },
 
-    pub fn ip(value: std.net.Address) @This() {
+    pub fn ip(value: AddressWithRange) @This() {
         return .{ .extension = .{ .ipaddr = Ipaddr.init(value) } };
     }
 
@@ -198,11 +275,7 @@ test CedarType {
     );
     // ipaddr ext
     try std.testing.expectEqual(
-        CedarType.ip(try std.net.Address.parseIp("192.168.1.100", 0)).extension.ipaddr.value.in,
-        (try std.net.Address.parseIp("192.168.1.100", 0)).in,
-    );
-    try std.testing.expectEqual(
-        (try CedarType.Ipaddr.parse("192.168.1.100")).value.in,
+        CedarType.ip(.{ .addr = try std.net.Address.parseIp("192.168.1.100", 0), .prefix = 0 }).extension.ipaddr.value.addr.in,
         (try std.net.Address.parseIp("192.168.1.100", 0)).in,
     );
 }
@@ -297,7 +370,7 @@ pub const Scope = struct {
         _: std.fmt.FormatOptions,
         writer: anytype,
     ) !void {
-        try writer.print("({s},{s},{s})", .{ self.principal, self.action, self.resource });
+        try writer.print("({s}, {s}, {s})", .{ self.principal, self.action, self.resource });
     }
 
     fn condition(
@@ -406,7 +479,13 @@ pub const Action = union(enum) {
     ) !void {
         switch (self) {
             .any => try writer.print("action", .{}),
-            .in => |v| try writer.print("action in {s}", .{v}),
+            .in => |v| {
+                try writer.print("action in [", .{});
+                for (v, 0..) |elem, i| {
+                    try writer.print("{s}{s}", .{ elem, if (i != v.len - 1) ", " else "" });
+                }
+                try writer.print("]", .{});
+            },
             .eq => |v| try writer.print("action == {s}", .{v}),
         }
     }
@@ -530,7 +609,7 @@ pub const Expr = union(enum) {
             return .{ .long = v };
         }
 
-        fn string(v: []const u8) @This() {
+        pub fn string(v: []const u8) @This() {
             return .{ .string = v };
         }
 
@@ -595,6 +674,7 @@ pub const Expr = union(enum) {
     @"or": struct { left: *const Expr, right: *const Expr },
     unary: struct { op: UnaryOp, arg: *const Expr },
     binary: struct { op: BinaryOp, arg1: *const Expr, arg2: *const Expr },
+    ext_fn: struct { name: []const u8, args: []*const Expr },
     // todo: ext fn app
     // todo: get attr
     // todo: has attr
@@ -661,11 +741,14 @@ pub const Expr = union(enum) {
         return unary(.not, arg);
     }
 
+    pub fn extFn(name: []const u8, args: []*const Expr) @This() {
+        return .{ .ext_fn = .{ .name = name, .args = args } };
+    }
+
     // binary ops
 
     pub fn binary(op: BinaryOp, arg1: *const Expr, arg2: *const Expr) @This() {
         return .{
-            // FIXME don't take address here
             .binary = .{ .op = op, .arg1 = arg1, .arg2 = arg2 },
         };
     }

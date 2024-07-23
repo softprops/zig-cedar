@@ -399,6 +399,24 @@ const Evaluator = struct {
                     Expr.isEntityType(try vv.heapify(self.arena.allocator()), v.type),
                 ),
             },
+            .ext_fn => |v| blk: {
+                // interpret arg exprs
+                var partials = try std.ArrayList(PartialValue).initCapacity(self.arena.allocator(), v.args.len);
+                defer partials.deinit();
+                for (v.args) |elem| {
+                    partials.appendAssumeCapacity(try self.partialInterpret(elem.*));
+                }
+                const splitPartials = try self.split(try partials.toOwnedSlice());
+
+                // todo: need a way to
+                // 1. look up a fn by name
+                // 2. call a fn with a list of CedarValues
+                // 3. return result as partial value
+                break :blk switch (splitPartials) {
+                    .values => error.TODO,
+                    .residuals => error.TODO,
+                };
+            },
             .unknown => PartialValue.residual(expr), // the unknown case
         };
     }
