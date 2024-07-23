@@ -874,20 +874,8 @@ fn parseExpr(allocator: std.mem.Allocator, tokens: []Token, index: usize) !?stru
 
 // RELOP ::= '<' | '<=' | '>=' | '>' | '!=' | '==' | 'in'
 fn parseRelOp(tokens: []Token, index: usize) ?struct { usize, types.Expr.BinaryOp } {
-    if (matches(tokens, index, .lt)) {
-        return .{ index + 1, .lt };
-    } else if (matches(tokens, index, .lte)) {
-        return .{ index + 1, .lte };
-    } else if (matches(tokens, index, .gte)) {
-        return .{ index + 1, .gte };
-    } else if (matches(tokens, index, .gt)) {
-        return .{ index + 1, .gt };
-    } else if (matches(tokens, index, .neq)) {
-        return .{ index + 1, .neq };
-    } else if (matches(tokens, index, .eq)) {
-        return .{ index + 1, .eq };
-    } else if (matches(tokens, index, .in)) {
-        return .{ index + 1, .in };
+    if (matchesAny(tokens, index, &.{ .lt, .lte, .gte, .gt, .neq, .eq, .in })) {
+        return .{ index + 1, std.meta.stringToEnum(types.Expr.BinaryOp, tokens[index].value()) };
     }
 
     return null;
