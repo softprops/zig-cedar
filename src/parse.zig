@@ -700,29 +700,29 @@ fn parseEntity(allocator: std.mem.Allocator, tokens: []Token, index: usize) !?st
 
 // ExtFun '(' [ExprList] ')'
 // ExtFun ::= [Path '::'] IDENT
-fn parseExtFnExpr(allocator: std.mem.Allocator, tokens: []Token, index: usize) !?struct { usize, types.Expr } {
-    if (try parsePath(allocator, tokens, index)) |pathRes| {
-        var i, const name = pathRes;
-        if (matches(tokens, i, .left_paren)) {
-            i = i + 1;
+// fn parseExtFnExpr(allocator: std.mem.Allocator, tokens: []Token, index: usize) !?struct { usize, types.Expr } {
+//     if (try parsePath(allocator, tokens, index)) |pathRes| {
+//         var i, const name = pathRes;
+//         if (matches(tokens, i, .left_paren)) {
+//             i = i + 1;
 
-            var args = std.ArrayList(*const types.Expr).init(allocator);
-            defer args.deinit();
-            // eat args until there are none
-            while (!matches(tokens, .right_paren)) {
-                if (try parseExpr(allocator, tokens, i)) |exprRes| {
-                    i, const expr = exprRes;
-                    try args.append(expr.heapify(allocator));
-                }
-            }
+//             var args = std.ArrayList(*const types.Expr).init(allocator);
+//             defer args.deinit();
+//             // eat args until there are none
+//             while (!matches(tokens, i, .right_paren)) {
+//                 if (try parseExpr(allocator, tokens, i)) |exprRes| {
+//                     i, const expr = exprRes;
+//                     try args.append(expr.heapify(allocator));
+//                 }
+//             }
 
-            try expectMatch(tokens, i, .right_paren, error.ExpectedRightParen);
-            i = i + 1;
-            return .{ i, types.Expr.extFn(name, try args.toOwnedSlice()) };
-        }
-    }
-    return null;
-}
+//             try expectMatch(tokens, i, .right_paren, error.ExpectedRightParen);
+//             i = i + 1;
+//             return .{ i, types.Expr.extFn(name, try args.toOwnedSlice()) };
+//         }
+//     }
+//     return null;
+// }
 
 // Path ::= IDENT {'::' IDENT}
 fn parsePath(allocator: std.mem.Allocator, tokens: []Token, index: usize) !?struct { usize, []const u8 } {
@@ -857,17 +857,19 @@ fn parseExpr(allocator: std.mem.Allocator, tokens: []Token, index: usize) !?stru
         //
 
         // cheat for now
-        // (var)
-        const arg1 = types.Expr.variable(std.meta.stringToEnum(types.Expr.Var, tokens[i].value()).?);
-        i = i + 1;
-        // skip over (in)
-        i = i + 1;
-        i, const arg2Entity = (try parseEntity(allocator, tokens, i)).?;
-        const arg2 = types.Expr.literal(.{ .entity = arg2Entity });
-        return .{
-            i,
-            types.Expr.in(try arg1.heapify(allocator), try arg2.heapify(allocator)),
-        };
+        if (try parsePrimaryExpr(allocator, tokens, i)) |arg1Res| {
+            i, const arg1 = arg1Res;
+            if (parseRelOp(tokens, i)) |relOpRes| {
+                i, const op = relOpRes;
+                if (try parsePrimaryExpr(allocator, tokens, i)) |arg2Res| {
+                    i, const arg2 = arg2Res;
+                    return .{
+                        i,
+                        types.Expr.binary(op, try arg1.heapify(allocator), try arg2.heapify(allocator)),
+                    };
+                }
+            }
+        }
     }
     return null;
 }
@@ -875,7 +877,7 @@ fn parseExpr(allocator: std.mem.Allocator, tokens: []Token, index: usize) !?stru
 // RELOP ::= '<' | '<=' | '>=' | '>' | '!=' | '==' | 'in'
 fn parseRelOp(tokens: []Token, index: usize) ?struct { usize, types.Expr.BinaryOp } {
     if (matchesAny(tokens, index, &.{ .lt, .lte, .gte, .gt, .neq, .eq, .in })) {
-        return .{ index + 1, std.meta.stringToEnum(types.Expr.BinaryOp, tokens[index].value()) };
+        return .{ index + 1, std.meta.stringToEnum(types.Expr.BinaryOp, tokens[index].value()).? };
     }
 
     return null;
@@ -890,12 +892,12 @@ fn parseRelOp(tokens: []Token, index: usize) ?struct { usize, types.Expr.BinaryO
 //           | '{' [RecInits] '}'
 fn parsePrimaryExpr(allocator: std.mem.Allocator, tokens: []Token, index: usize) !?struct { usize, types.Expr } {
     // LITERAL
-    if (parseLiteralExpr(tokens, index)) |res| {
+    if (try parseLiteralExpr(tokens, index)) |res| {
         const i, const expr = res;
         return .{ i, expr };
     }
     // VAR
-    else if (parseVarExpr(tokens, index)) |res| {
+    else if (try parseVarExpr(tokens, index)) |res| {
         const i, const expr = res;
         return .{ i, expr };
     }
@@ -905,15 +907,16 @@ fn parsePrimaryExpr(allocator: std.mem.Allocator, tokens: []Token, index: usize)
         return .{ i, types.Expr.literal(types.Expr.Literal.entity(e)) };
     }
     // ExtFun
-    else if (try parseExtFnExpr(allocator, tokens, index)) |res| {
-        const i, const f = res;
-        return .{ i, f };
-    }
+    // else if (try parseExtFnExpr(allocator, tokens, index)) |res| {
+    //     const i, const f = res;
+    //     return .{ i, f };
+    // }
+    std.debug.print("failed to resolve primary around token {}", .{tokens[index].kind});
     return null;
 }
 
 // LITERAL ::= BOOL | INT | STR
-fn parseLiteralExpr(tokens: []Token, index: usize) ?struct { usize, types.Expr } {
+fn parseLiteralExpr(tokens: []Token, index: usize) !?struct { usize, types.Expr } {
     if (matches(tokens, index, .true) or matches(tokens, index, .false)) {
         return .{ index + 1, types.Expr.literal(types.Expr.Literal.boolean(matches(tokens, index, .true))) };
     } else if (matches(tokens, index, .pos_int) or matches(tokens, index, .neg_int)) {
@@ -925,9 +928,9 @@ fn parseLiteralExpr(tokens: []Token, index: usize) ?struct { usize, types.Expr }
 }
 
 // VAR ::= 'principal' | 'action' | 'resource' | 'context'
-fn parseVarExpr(tokens: []Token, index: usize) ?struct { usize, types.Expr } {
+fn parseVarExpr(tokens: []Token, index: usize) !?struct { usize, types.Expr } {
     return if (matchesAny(tokens, index, &.{ .principal, .action, .resource, .context }))
-        .{ index + 1, types.Expr.variable(std.meta.stringToEnum(types.Expr.Var, tokens[index].value())) }
+        .{ index + 1, types.Expr.variable(std.meta.stringToEnum(types.Expr.Var, tokens[index].value()).?) }
     else
         null;
 }
@@ -1003,7 +1006,7 @@ fn matches(tokens: []Token, index: usize, kind: Token.Kind) bool {
 }
 
 fn matchesAny(tokens: []Token, index: usize, kinds: []const Token.Kind) bool {
-    if (index <= tokens.len) {
+    if (index >= tokens.len) {
         return false;
     }
     for (kinds) |k| {
