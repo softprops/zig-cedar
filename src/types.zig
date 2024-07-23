@@ -654,6 +654,7 @@ pub const Expr = union(enum) {
 
     pub const BinaryOp = enum {
         eq,
+        //neq,
         lt,
         lte,
         add,

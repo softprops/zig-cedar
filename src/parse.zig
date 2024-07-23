@@ -55,6 +55,7 @@ const Token = struct {
         string,
         pos_int,
         neg_int,
+        period,
     };
 
     start: u64,
@@ -164,6 +165,7 @@ const BUILTINS = [_]Builtin{
     .{ .name = "}", .kind = .right_brace },
     .{ .name = ",", .kind = .comma },
     .{ .name = ";", .kind = .semicolon },
+    .{ .name = ".", .kind = .period },
 };
 
 fn lex(source: []const u8, tokens: *std.ArrayList(Token)) !void {
@@ -696,6 +698,32 @@ fn parseEntity(allocator: std.mem.Allocator, tokens: []Token, index: usize) !?st
     return null;
 }
 
+// ExtFun '(' [ExprList] ')'
+// ExtFun ::= [Path '::'] IDENT
+fn parseExtFnExpr(allocator: std.mem.Allocator, tokens: []Token, index: usize) !?struct { usize, types.Expr } {
+    if (try parsePath(allocator, tokens, index)) |pathRes| {
+        var i, const name = pathRes;
+        if (matches(tokens, i, .left_paren)) {
+            i = i + 1;
+
+            var args = std.ArrayList(*const types.Expr).init(allocator);
+            defer args.deinit();
+            // eat args until there are none
+            while (!matches(tokens, .right_paren)) {
+                if (try parseExpr(allocator, tokens, i)) |exprRes| {
+                    i, const expr = exprRes;
+                    try args.append(expr.heapify(allocator));
+                }
+            }
+
+            try expectMatch(tokens, i, .right_paren, error.ExpectedRightParen);
+            i = i + 1;
+            return .{ i, types.Expr.extFn(name, try args.toOwnedSlice()) };
+        }
+    }
+    return null;
+}
+
 // Path ::= IDENT {'::' IDENT}
 fn parsePath(allocator: std.mem.Allocator, tokens: []Token, index: usize) !?struct { usize, []const u8 } {
     var i = index;
@@ -829,9 +857,10 @@ fn parseExpr(allocator: std.mem.Allocator, tokens: []Token, index: usize) !?stru
         //
 
         // cheat for now
+        // (var)
         const arg1 = types.Expr.variable(std.meta.stringToEnum(types.Expr.Var, tokens[i].value()).?);
         i = i + 1;
-        // skip over in
+        // skip over (in)
         i = i + 1;
         i, const arg2Entity = (try parseEntity(allocator, tokens, i)).?;
         const arg2 = types.Expr.literal(.{ .entity = arg2Entity });
@@ -843,6 +872,117 @@ fn parseExpr(allocator: std.mem.Allocator, tokens: []Token, index: usize) !?stru
     return null;
 }
 
+// RELOP ::= '<' | '<=' | '>=' | '>' | '!=' | '==' | 'in'
+fn parseRelOp(tokens: []Token, index: usize) ?struct { usize, types.Expr.BinaryOp } {
+    if (matches(tokens, index, .lt)) {
+        return .{ index + 1, .lt };
+    } else if (matches(tokens, index, .lte)) {
+        return .{ index + 1, .lte };
+    } else if (matches(tokens, index, .gte)) {
+        return .{ index + 1, .gte };
+    } else if (matches(tokens, index, .gt)) {
+        return .{ index + 1, .gt };
+    } else if (matches(tokens, index, .neq)) {
+        return .{ index + 1, .neq };
+    } else if (matches(tokens, index, .eq)) {
+        return .{ index + 1, .eq };
+    } else if (matches(tokens, index, .in)) {
+        return .{ index + 1, .in };
+    }
+
+    return null;
+}
+
+// Primary ::= LITERAL
+//           | VAR
+//           | Entity
+//           | ExtFun '(' [ExprList] ')'
+//           | '(' Expr ')'
+//           | '[' [ExprList] ']'
+//           | '{' [RecInits] '}'
+fn parsePrimaryExpr(allocator: std.mem.Allocator, tokens: []Token, index: usize) !?struct { usize, types.Expr } {
+    // LITERAL
+    if (parseLiteralExpr(tokens, index)) |res| {
+        const i, const expr = res;
+        return .{ i, expr };
+    }
+    // VAR
+    else if (parseVarExpr(tokens, index)) |res| {
+        const i, const expr = res;
+        return .{ i, expr };
+    }
+    // Entity
+    else if (try parseEntity(allocator, tokens, index)) |res| {
+        const i, const e = res;
+        return .{ i, types.Expr.literal(types.Expr.Literal.entity(e)) };
+    }
+    // ExtFun
+    else if (try parseExtFnExpr(allocator, tokens, index)) |res| {
+        const i, const f = res;
+        return .{ i, f };
+    }
+    return null;
+}
+
+// LITERAL ::= BOOL | INT | STR
+fn parseLiteralExpr(tokens: []Token, index: usize) ?struct { usize, types.Expr } {
+    if (matches(tokens, index, .true) or matches(tokens, index, .false)) {
+        return .{ index + 1, types.Expr.literal(types.Expr.Literal.boolean(matches(tokens, index, .true))) };
+    } else if (matches(tokens, index, .pos_int) or matches(tokens, index, .neg_int)) {
+        return .{ index + 1, types.Expr.literal(types.Expr.Literal.long(try std.fmt.parseInt(i64, tokens[index].value(), 10))) };
+    } else if (matches(tokens, index, .string)) {
+        return .{ index + 1, types.Expr.literal(types.Expr.Literal.string(tokens[index].value())) };
+    }
+    return null;
+}
+
+// VAR ::= 'principal' | 'action' | 'resource' | 'context'
+fn parseVarExpr(tokens: []Token, index: usize) ?struct { usize, types.Expr } {
+    return if (matchesAny(tokens, index, &.{ .principal, .action, .resource, .context }))
+        .{ index + 1, types.Expr.variable(std.meta.stringToEnum(types.Expr.Var, tokens[index].value())) }
+    else
+        null;
+}
+
+// Access ::= '.' IDENT ['(' [ExprList] ')'] | '[' STR ']'
+fn parseAccess(allocator: std.mem.Allocator, tokens: []Token, index: usize) !?struct { usize, []const u8, []*const types.Expr } {
+    // '.' IDENT ['(' [ExprList] ')']
+    if (matches(tokens, index, .period)) {
+        var i = index + 1;
+        try expectMatch(tokens, i, .ident, error.ExpectedIdentifier);
+        const name = tokens[i].value();
+        i = i + 1;
+        var args = std.ArrayList(*const types.Expr).init(allocator);
+        defer args.deinit();
+        if (matches(tokens, i, .left_paren)) {
+            i = i + 1;
+            while (!matches(tokens, i, .right_paren)) {
+                if (try parseExpr(allocator, tokens, i)) |res| {
+                    i, const expr = res;
+                    try args.append(expr.heapify(allocator));
+                }
+                // eat comma
+                if (matches(tokens, i, .comma)) {
+                    i = i + 1;
+                }
+            }
+            try expectMatch(tokens, i, .right_paren, error.ExpectedRightParen);
+            i = i + 1;
+        }
+        return .{ i, name, try args.toOwnedSlice() };
+    }
+    // '[' STR ']'
+    else if (matches(tokens, index, .list_open)) {
+        var i = index + 1;
+        try expectMatch(tokens, i, .string, error.ExpectedString);
+        const name = tokens[i].value();
+        i = i + 1;
+        try expectMatch(tokens, i, .list_close, error.ExpectedBraceClose);
+        i = i + 1;
+        return .{ i, name, &.{} };
+    }
+    return null;
+}
 // EntList ::= Entity {',' Entity}
 fn parseEntityList(
     allocator: std.mem.Allocator,
@@ -874,6 +1014,18 @@ fn matches(tokens: []Token, index: usize, kind: Token.Kind) bool {
     return if (index >= tokens.len) false else tokens[index].kind == kind;
 }
 
+fn matchesAny(tokens: []Token, index: usize, kinds: []const Token.Kind) bool {
+    if (index <= tokens.len) {
+        return false;
+    }
+    for (kinds) |k| {
+        if (tokens[index].kind == k) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /// returns err if the token at a given index doesn't match
 fn expectMatch(tokens: []Token, index: usize, kind: Token.Kind, err: anyerror) !void {
     if (index >= tokens.len) {
@@ -898,7 +1050,7 @@ test parse {
         \\)
         \\permit(
         \\  principal == ?principal,
-        \\  action,
+        \\  action in [Action::"foo",Action::"bar"],
         \\  resource in asdf::"1234"
         \\);
         ,
@@ -910,7 +1062,7 @@ test parse {
         defer allocator.free(ps);
         try std.testing.expectEqualStrings(
             \\@annot("value")
-            \\permit(principal == <slot>,action,resource in asdf::"1234");
+            \\permit(principal == <slot>, action in [Action::"foo", Action::"bar"], resource in asdf::"1234");
         , ps);
     }
 }
